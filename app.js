@@ -32,7 +32,7 @@
     { id: 'noise', label: 'Noise' },
   ];
   const OSC_COLORS = ['#4fc3ff', '#ffb347', '#c58cff'];
-  const LANE_COLORS = ['#ff5fa2', '#ffd84f'];
+  const LANE_COLORS = ['#ff5fa2', '#ffd84f', '#6be0ff'];
 
   // ================================================================ state
   const defaultOsc = () => ({
@@ -53,7 +53,7 @@
     cutoff: 18000, res: 0, fenv: 0, pitch: 0,
     bpm: 120, gate: 0.5, bars: 1, loop: true, seqRoot: 36,
     seq: new Array(16).fill(-1),
-    lanes: [newLane('cutoff'), newLane('pitch')],
+    lanes: [newLane('cutoff'), newLane('pitch'), newLane('master')],
     octave: 4,
     windowMs: 10,
     freeze: false,
@@ -165,8 +165,12 @@
         break;
       case 'voice': updateVoices(tau); break;
       case 'master': if (masterGain) masterGain.gain.setTargetAtTime(state.master, actx.currentTime, tau); break;
+      case 'fx': updateFx(tau); break;
+      case 'rev': scheduleIR(); updateFx(tau); break;
       default: break;
     }
+    if (p.key === 'bpm') applyDelaySync();
+    if (p.key === 'dlyTime' && state.dly.sync !== 'off' && Math.abs(state.dly.time - DLY_SYNC[state.dly.sync] * 60 / state.bpm) > 0.002) { state.dly.sync = 'off'; if (fxUI.sync) fxUI.sync.value = 'off'; }
     if (p.i != null && oscUI[p.i]) oscUI[p.i].root.classList.toggle('silent', !audible(p.i));
     markDirty();
   }
@@ -276,6 +280,8 @@
     for (let k = 0; k < d.length; k++) d[k] = Math.random() * 2 - 1;
 
     for (let i = 0; i < 3; i++) rebuildPeriodicWave(i);
+    buildFxGraph();
+    gateRestart();
     return true;
   }
 
@@ -307,6 +313,7 @@
       this.note = note;
       this.velocity = velocity;
       this.t0 = t;
+      lastHit = t;
       this.A = state.attack; this.D = state.decay; this.S = state.sustain; this.R = state.release;
       this.fAmt = state.fenv * 1200;
       this.relAt = null;
@@ -314,7 +321,7 @@
 
       this.env = actx.createGain();
       this.env.gain.value = 0;
-      this.env.connect(masterGain);
+      this.env.connect(fx.bus);
       this.filter = actx.createBiquadFilter();
       this.filter.type = 'lowpass';
       this.filter.connect(this.env);
@@ -1354,6 +1361,7 @@
     if (!ensureAudio() || transport.playing) return;
     Object.assign(transport, { playing: true, step: 0, loop: 1, log: [], endTime: null, visStep: -1, visLoop: 0 });
     transport.nextTime = actx.currentTime + 0.05;
+    if (state.gator.on) gateRestart(transport.nextTime);
     state.lanes.forEach(laneEngage);
     transport.timer = setInterval(tick, 25);
     tick();
@@ -1622,17 +1630,16 @@
 
   let glowed = [];
   function refreshAutoGlow() {
-    glowed.forEach((el) => el.classList.remove('auto-a', 'auto-b'));
+    glowed.forEach((el) => el.classList.remove('auto-a', 'auto-b', 'auto-c', 'auto-m'));
     glowed = [];
-    if (!transport.playing) return;
-    state.lanes.forEach((l, k) => {
-      if (!l.on) return;
-      (paramUI[l.target] || []).forEach((u) => {
-        const el = u.label || u.inp;
-        el.classList.add(k ? 'auto-b' : 'auto-a');
-        glowed.push(el);
-      });
+    const mark = (target, cls) => (paramUI[target] || []).forEach((u) => {
+      const el = u.label || u.inp;
+      el.classList.add(cls);
+      glowed.push(el);
     });
+    (state.mods || []).forEach((m) => { if (m.on) mark(m.target, 'auto-m'); });
+    if (!transport.playing) return;
+    state.lanes.forEach((l, k) => { if (l.on) mark(l.target, ['auto-a', 'auto-b', 'auto-c'][k]); });
   }
 
   const lanesEl = document.getElementById('lanes');
@@ -1641,7 +1648,7 @@
     lanesEl.innerHTML = state.lanes.map((l, k) => `
       <div class="lane" data-l="${k}">
         <div class="lane-head">
-          <button type="button" class="toggle lane-on" data-info="lane">Lane ${'AB'[k]}</button>
+          <button type="button" class="toggle lane-on" data-info="lane">Lane ${'ABC'[k]}</button>
           <label data-info="laneTarget">Controls <select class="lane-target">${AUTO_TARGETS.map((t) => `<option value="${t}">${PARAMS[t].label}</option>`).join('')}</select></label>
           <span class="shapes" data-info="laneShape">${LANE_SHAPES.map((s) => `<button type="button" class="toggle" data-shape="${s.id}">${s.label}</button>`).join('')}</span>
           <label data-info="laneCycles">Repeats <select class="lane-cycles">${[1, 2, 4, 8, 16].map((c) => `<option value="${c}">${c}</option>`).join('')}</select></label>
@@ -1773,7 +1780,7 @@
         label(g, `${p.label} → ${p.fmt(p.get())}`, w - 8, 13, '#fff', 'right');
       }
     } else if (!l.on) {
-      label(g, `off — click “Lane ${'AB'[k]}”, a shape, or draw here`, w - 8, 13, '#8a93a8', 'right');
+      label(g, `off — click “Lane ${'ABC'[k]}”, a shape, or draw here`, w - 8, 13, '#8a93a8', 'right');
     } else {
       label(g, `${p.label} — press Play to run`, w - 8, 13, '#8a93a8', 'right');
     }
@@ -1903,9 +1910,27 @@
     state.res = P.res ?? 0;
     state.fenv = P.fenv ?? 0;
     state.pitch = 0;
+    if (P.master != null) state.master = P.master;
     [state.attack, state.decay, state.sustain, state.release] = P.env || [0.01, 0.3, 0.8, 0.3];
+    // effects: presets give short forms (present = on), saved/shared sounds give the full state
+    if (P.gatorFull) state.gator = { ...P.gatorFull, steps: [...P.gatorFull.steps] };
+    else if (P.gator) {
+      const { pattern, ...rest } = P.gator;
+      state.gator = { ...defaultGator(), ...rest, on: true, steps: pattern ? parseGate(pattern) : defaultGator().steps };
+    } else state.gator = defaultGator();
+    state.dly = P.dlyFull ? { ...P.dlyFull } : P.dly ? { ...defaultDly(), ...P.dly, on: true } : defaultDly();
+    state.rev = P.revFull ? { ...P.revFull } : P.rev ? { ...defaultRev(), ...P.rev, on: true } : defaultRev();
+    state.mods.forEach((m, k) => {
+      modDisengage(m, false);
+      Object.assign(m, newMod(k ? 'revMix' : 'dlyTime'), (P.mods && P.mods[k]) || {});
+    });
     for (let i = 0; i < 3; i++) { rebuildTable(i); rebuildPeriodicWave(i); }
-    if (actx) for (const v of activeVoices) { for (let i = 0; i < 3; i++) v.refreshSource(i); v.routeOsc3(); v.update(); }
+    if (actx) {
+      for (const v of activeVoices) { for (let i = 0; i < 3; i++) v.refreshSource(i); v.routeOsc3(); v.update(); }
+      buildIR();
+      updateFx(0.01);
+      gateRestart();
+    }
     syncAll();
   }
 
@@ -1933,36 +1958,1243 @@
     }
   }
 
-  function loadPreset(k) {
-    const P = PRESETS[k];
-    if (!ensureAudio()) return;
+  // k: index into PRESETS, or a patch object (surprise, saved or shared sound). play=false loads silently.
+  function loadPreset(k, play = true) {
+    const isIndex = typeof k === 'number';
+    const P = isIndex ? PRESETS[k] : k;
+    if (play && !ensureAudio()) return;
     stopTransport();
     stopAll();
     setHold(false);
     clearLesson();
     applyPatch(P);
-    presetBtns.forEach((b, j) => b && b.classList.toggle('on', j === k));
+    presetBtns.forEach((b, j) => b && b.classList.toggle('on', isIndex && j === k));
     presetDesc.innerHTML = `<b>${P.name}</b> — ${P.desc}`;
-    if (demoToggle.checked && P.demo) {
+    if (P.demo && (demoToggle.checked || !isIndex)) {
       const d = P.demo;
       state.bpm = d.bpm ?? 120;
       state.bars = d.bars ?? 1;
       state.gate = d.gate ?? 0.5;
       state.seqRoot = d.root ?? 48;
       state.loop = d.loop ?? true;
-      state.seq = parseSeq(d.seq);
+      if (d.seq) state.seq = parseSeq(d.seq);
       const lanes = d.lanes || [];
-      state.lanes.forEach((l, j) => setLane(j, lanes[j] ? { ...lanes[j], on: true } : { on: false }));
+      state.lanes.forEach((l, j) => {
+        setLane(j, lanes[j] ? { ...lanes[j], pts: l.pts, on: true } : { on: false });
+        if (lanes[j] && lanes[j].pts) l.pts.set(lanes[j].pts);
+      });
+      applyDelaySync();
       syncAll();
-      startTransport();
-      if (d.drone != null) startDrone(d.drone);
-    } else {
+      if (play) {
+        startTransport();
+        if (d.drone != null) startDrone(d.drone);
+      }
+    } else if (play) {
+      applyDelaySync();
       const v = new Voice(state.seqRoot + 12, 0.9);
       v.release(actx.currentTime + 0.8);
       lastNote = state.seqRoot + 12;
     }
+    refreshAutoGlow();
     markDirty();
   }
+
+  // ================================================================ effects: gator, echo/chorus/delay, reverb
+  // Chain after the voices:  voices -> bus -> GATOR -> (dry + ECHO) -> (dry + REVERB) -> master
+  const fx = {};
+  const GATE_SHAPES = [
+    { id: 'square', label: '⊓ Square' }, { id: 'down', label: '◺ Pluck' }, { id: 'up', label: '◿ Swell' },
+    { id: 'tri', label: '△ Tri' }, { id: 'sine', label: '◠ Smooth' },
+  ];
+  const GATE_PATTERNS = {
+    Trance: 'X.XX.XX.X.XX.XX.',
+    '16ths': 'XXXXXXXXXXXXXXXX',
+    Offbeat: '..X...X...X...X.',
+    Half: 'XXXX....XXXX....',
+    Stutter: 'XxXx..XX.xXxX...',
+    Build: 'x.x.x.x.XxXxXXXX',
+    Heartbeat: 'X.x.............',
+  };
+  const parseGate = (str) => [...str].slice(0, 16).map((c) => (c === 'X' ? 1 : c === 'x' ? 0.55 : 0));
+  const DLY_SYNC = { off: 0, '1/32': 0.125, '1/16': 0.25, '1/8': 0.5, '1/8d': 0.75, '1/4': 1, '1/4d': 1.5, '1/2': 2 };
+  const DLY_MODES = {
+    Chorus: { time: 0.018, fb: 0.1, depth: 0.004, rate: 0.8, spread: 1, mix: 0.5, tone: 12000, sync: 'off' },
+    Flanger: { time: 0.003, fb: 0.7, depth: 0.0025, rate: 0.2, spread: 0.3, mix: 0.6, tone: 14000, sync: 'off' },
+    Slapback: { time: 0.09, fb: 0.1, depth: 0, rate: 0.5, spread: 0, mix: 0.4, tone: 6000, sync: 'off' },
+    Echo: { fb: 0.45, depth: 0, rate: 0.5, spread: 0, mix: 0.35, tone: 3500, sync: '1/4' },
+    'Ping-pong': { fb: 0.5, depth: 0, rate: 0.5, spread: 1, mix: 0.4, tone: 5000, sync: '1/8d' },
+    Dub: { fb: 0.72, depth: 0.0008, rate: 0.3, spread: 0.7, mix: 0.5, tone: 1200, sync: '1/8d' },
+  };
+  const REV_MODES = {
+    Room: { size: 0.8, pre: 0.005, damp: 6000, mix: 0.25 },
+    Plate: { size: 1.8, pre: 0, damp: 12000, mix: 0.3 },
+    Hall: { size: 2.8, pre: 0.02, damp: 7000, mix: 0.35 },
+    Cathedral: { size: 7, pre: 0.04, damp: 4000, mix: 0.45 },
+    Infinite: { size: 10, pre: 0.03, damp: 9000, mix: 0.6 },
+  };
+
+  const defaultGator = () => ({ on: false, depth: 1, len: 0.7, smooth: 0.08, rate: 16, shape: 'square', steps: parseGate(GATE_PATTERNS.Trance) });
+  const defaultDly = () => ({ on: false, mix: 0.35, time: 0.375, fb: 0.4, tone: 4000, spread: 0.6, rate: 0.5, depth: 0, sync: '1/8d' });
+  const defaultRev = () => ({ on: false, mix: 0.3, size: 2.5, pre: 0.02, damp: 7000 });
+  state.gator = defaultGator();
+  state.dly = defaultDly();
+  state.rev = defaultRev();
+
+  const fmtMs = (s) => (s < 1 ? (s * 1000).toFixed(s < 0.01 ? 1 : 0) + ' ms' : s.toFixed(2) + ' s');
+  defParam('gateDepth', { label: 'Gator depth', kind: 'fx', min: 0, max: 1, step: 0.01, get: () => state.gator.depth, set: (v) => { state.gator.depth = v; }, fmt: fmtPct });
+  defParam('gateLen', { label: 'Gator gate length', kind: 'fx', min: 0.05, max: 1, step: 0.01, get: () => state.gator.len, set: (v) => { state.gator.len = v; }, fmt: fmtPct });
+  defParam('gateSmooth', { label: 'Gator smoothing', kind: 'fx', min: 0, max: 0.5, step: 0.01, get: () => state.gator.smooth, set: (v) => { state.gator.smooth = v; }, fmt: fmtPct });
+  defParam('dlyMix', { label: 'Echo mix', kind: 'fx', min: 0, max: 1, step: 0.01, get: () => state.dly.mix, set: (v) => { state.dly.mix = v; }, fmt: fmtPct });
+  defParam('dlyTime', { label: 'Echo time', kind: 'fx', min: 0.001, max: 1.5, log: true, get: () => state.dly.time, set: (v) => { state.dly.time = v; }, fmt: fmtMs });
+  defParam('dlyFb', { label: 'Echo feedback', kind: 'fx', min: 0, max: 0.95, step: 0.01, get: () => state.dly.fb, set: (v) => { state.dly.fb = v; }, fmt: fmtPct });
+  defParam('dlyTone', { label: 'Echo tone', kind: 'fx', min: 300, max: 18000, log: true, get: () => state.dly.tone, set: (v) => { state.dly.tone = v; }, fmt: fmtHz });
+  defParam('dlySpread', { label: 'Echo stereo spread', kind: 'fx', min: 0, max: 1, step: 0.01, get: () => state.dly.spread, set: (v) => { state.dly.spread = v; }, fmt: fmtPct });
+  defParam('dlyRate', { label: 'Echo wobble rate', kind: 'fx', min: 0.05, max: 8, log: true, get: () => state.dly.rate, set: (v) => { state.dly.rate = v; }, fmt: fmtHz });
+  defParam('dlyDepth', { label: 'Echo wobble depth', kind: 'fx', min: 0, max: 0.012, step: 0.0001, get: () => state.dly.depth, set: (v) => { state.dly.depth = v; }, fmt: (v) => (v * 1000).toFixed(1) + ' ms' });
+  defParam('revMix', { label: 'Reverb mix', kind: 'fx', min: 0, max: 1, step: 0.01, get: () => state.rev.mix, set: (v) => { state.rev.mix = v; }, fmt: fmtPct });
+  defParam('revSize', { label: 'Reverb decay', kind: 'rev', min: 0.2, max: 10, log: true, get: () => state.rev.size, set: (v) => { state.rev.size = v; }, fmt: (v) => v.toFixed(2) + ' s' });
+  defParam('revPre', { label: 'Reverb pre-delay', kind: 'fx', min: 0, max: 0.25, step: 0.001, get: () => state.rev.pre, set: (v) => { state.rev.pre = v; }, fmt: (v) => Math.round(v * 1000) + ' ms' });
+  defParam('revDamp', { label: 'Reverb damping', kind: 'fx', min: 500, max: 18000, log: true, get: () => state.rev.damp, set: (v) => { state.rev.damp = v; }, fmt: fmtHz });
+  AUTO_TARGETS.push('gateDepth', 'gateLen', 'gateSmooth', 'dlyMix', 'dlyTime', 'dlyFb', 'dlyTone', 'dlySpread', 'dlyRate', 'dlyDepth', 'revMix', 'revPre', 'revDamp');
+
+  function buildFxGraph() {
+    fx.bus = actx.createGain();
+    fx.gate = actx.createGain();
+    fx.bus.connect(fx.gate);
+    // echo / chorus / delay: two cross-fed delay lines (ping-pong) with a tone filter and an LFO on the time
+    fx.dIn = actx.createGain();
+    fx.dRin = actx.createGain();
+    fx.dL = actx.createDelay(2);
+    fx.dR = actx.createDelay(2);
+    fx.toneL = actx.createBiquadFilter(); fx.toneL.type = 'lowpass';
+    fx.toneR = actx.createBiquadFilter(); fx.toneR.type = 'lowpass';
+    fx.fbL = actx.createGain(); fx.fbR = actx.createGain();
+    fx.panL = actx.createStereoPanner(); fx.panR = actx.createStereoPanner();
+    fx.dWet = actx.createGain(); fx.dWet.gain.value = 0;
+    fx.gate.connect(fx.dIn);
+    fx.dIn.connect(fx.dL);
+    fx.dIn.connect(fx.dRin).connect(fx.dR);
+    fx.dL.connect(fx.toneL).connect(fx.fbL).connect(fx.dR);
+    fx.dR.connect(fx.toneR).connect(fx.fbR).connect(fx.dL);
+    fx.dL.connect(fx.panL).connect(fx.dWet);
+    fx.dR.connect(fx.panR).connect(fx.dWet);
+    fx.lfo = actx.createOscillator();
+    fx.lfoL = actx.createGain(); fx.lfoR = actx.createGain();
+    fx.lfo.connect(fx.lfoL).connect(fx.dL.delayTime);
+    fx.lfo.connect(fx.lfoR).connect(fx.dR.delayTime);
+    fx.lfo.start();
+    fx.post = actx.createGain();
+    fx.gate.connect(fx.post);
+    fx.dWet.connect(fx.post);
+    // reverb: pre-delay -> convolution with a generated room -> damping filter
+    fx.rDry = actx.createGain();
+    fx.rPre = actx.createDelay(1);
+    fx.conv = actx.createConvolver();
+    fx.rDamp = actx.createBiquadFilter(); fx.rDamp.type = 'lowpass';
+    fx.rWet = actx.createGain(); fx.rWet.gain.value = 0;
+    fx.post.connect(fx.rDry).connect(masterGain);
+    fx.post.connect(fx.rPre).connect(fx.conv).connect(fx.rDamp).connect(fx.rWet).connect(masterGain);
+    buildIR();
+    updateFx(0);
+    let last = performance.now();
+    setInterval(() => {
+      const now = performance.now();
+      fxTick((now - last) / 1000);
+      last = now;
+    }, 25);
+  }
+
+  function updateFx(tau = 0.02) {
+    if (!actx || !fx.bus) return;
+    const t = actx.currentTime;
+    const set = (param, v) => (tau ? param.setTargetAtTime(v, t, tau) : (param.value = v));
+    const d = state.dly;
+    const dep = Math.min(d.depth, d.time * 0.9);
+    set(fx.dL.delayTime, d.time);
+    set(fx.dR.delayTime, d.time);
+    set(fx.fbL.gain, d.fb); set(fx.fbR.gain, d.fb);
+    set(fx.toneL.frequency, d.tone); set(fx.toneR.frequency, d.tone);
+    set(fx.panL.pan, -d.spread); set(fx.panR.pan, d.spread);
+    set(fx.lfo.frequency, d.rate);
+    set(fx.lfoL.gain, dep); set(fx.lfoR.gain, -dep);
+    set(fx.dRin.gain, d.time < 0.04 ? 1 : 0);   // short (chorus/flanger) times feed both sides
+    set(fx.dWet.gain, d.on ? d.mix : 0);
+    const r = state.rev;
+    set(fx.rWet.gain, r.on ? r.mix * 1.2 : 0);
+    set(fx.rDry.gain, r.on ? 1 - r.mix * 0.5 : 1);
+    set(fx.rPre.delayTime, r.pre);
+    set(fx.rDamp.frequency, r.damp);
+  }
+
+  // A reverb "room" is just a burst of noise that dies away: -60 dB after `size` seconds.
+  function buildIR() {
+    if (!actx) return;
+    const sr = actx.sampleRate;
+    const size = state.rev.size;
+    const n = Math.floor(sr * Math.min(10, size * 1.2 + 0.1));
+    const buf = actx.createBuffer(2, n, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const fadeIn = Math.min(1, t / 0.004);
+        data[i] = (Math.random() * 2 - 1) * Math.exp((-6.9 * t) / size) * fadeIn;
+      }
+      // a few early reflections
+      for (let k = 0; k < 8; k++) {
+        const i = Math.floor(sr * (0.007 + Math.random() * 0.06 * Math.min(1, size)));
+        if (i < n) data[i] += (Math.random() < 0.5 ? -1 : 1) * (0.9 - k * 0.08);
+      }
+    }
+    fx.conv.buffer = buf;
+  }
+  let irTimer = null;
+  const scheduleIR = () => { clearTimeout(irTimer); irTimer = setTimeout(buildIR, 150); };
+
+  function applyDelaySync() {
+    const beats = DLY_SYNC[state.dly.sync];
+    if (!beats) return;
+    state.dly.time = clamp((beats * 60) / state.bpm, 0.001, 1.5);
+    syncParam('dlyTime');
+    updateFx();
+  }
+
+  // ---------------------------------------------------------------- gator scheduling
+  const gateClock = { next: 0, step: 0, log: [] };
+  const gateStepDur = () => 60 / state.bpm / (state.gator.rate / 4);
+  function gateShapeVal(id, q) {
+    switch (id) {
+      case 'down': return 1 - q;
+      case 'up': return q;
+      case 'tri': return 1 - Math.abs(2 * q - 1);
+      case 'sine': return Math.sin(Math.PI * q);
+      default: return 1;
+    }
+  }
+  // Level of one gate step at position p (0..1 through the step), before depth.
+  function gateLevelAt(level, p) {
+    const g = state.gator;
+    if (p > g.len || level <= 0) return 0;
+    const q = p / g.len;
+    let s = gateShapeVal(g.shape, q);
+    if (g.smooth > 0) s *= Math.min(1, q / g.smooth, (1 - q) / g.smooth);
+    return level * s;
+  }
+  function gateCurve(level) {
+    const N = 48, c = new Float32Array(N);
+    for (let k = 0; k < N; k++) c[k] = 1 - state.gator.depth * (1 - gateLevelAt(level, k / (N - 1)));
+    return c;
+  }
+  function gateTick() {
+    if (!actx || !fx.gate || !state.gator.on) return;
+    const now = actx.currentTime;
+    if (gateClock.next < now) gateClock.next = now + 0.02;
+    while (gateClock.next < now + 0.12) {
+      const d = gateStepDur();
+      const s = gateClock.step % 16;
+      try { fx.gate.gain.setValueCurveAtTime(gateCurve(state.gator.steps[s]), gateClock.next, d * 0.995); } catch (e) { /* overlapping curve: skip */ }
+      gateClock.log.push({ s, t: gateClock.next, d });
+      if (gateClock.log.length > 64) gateClock.log.shift();
+      gateClock.step++;
+      gateClock.next += d;
+    }
+  }
+  function gateRestart(at) {
+    if (!actx || !fx.gate) return;
+    const now = actx.currentTime;
+    holdAt(fx.gate.gain, now, 1);
+    gateClock.log = [];
+    if (state.gator.on) {
+      gateClock.next = at ?? now + 0.03;
+      gateClock.step = 0;
+      gateTick();
+    } else {
+      fx.gate.gain.setTargetAtTime(1, now, 0.01);
+    }
+  }
+  function gatePos() {
+    if (!actx || !state.gator.on) return null;
+    const now = actx.currentTime;
+    const log = gateClock.log;
+    for (let k = log.length - 1; k >= 0; k--) {
+      if (log[k].t <= now) return { s: log[k].s, f: clamp((now - log[k].t) / log[k].d, 0, 1) };
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------- modulators (free-running LFOs on any knob)
+  const MOD_SHAPES = [{ id: 'sine', label: '∿' }, { id: 'tri', label: '△' }, { id: 'saw', label: '⟋' }, { id: 'square', label: '⊓' }, { id: 'random', label: '⁂' }];
+  const newMod = (target) => ({ on: false, target, shape: 'sine', rate: 0.5, depth: 0.4, phase: 0, base: null, cur: null, rnd: 0, lastCycle: -1 });
+  state.mods = [newMod('dlyTime'), newMod('revMix')];
+  function modValue(m) {
+    const p = m.phase;
+    switch (m.shape) {
+      case 'tri': return 1 - 4 * Math.abs(p - 0.5);
+      case 'saw': return 2 * p - 1;
+      case 'square': return p < 0.5 ? 1 : -1;
+      case 'random': return m.rnd;
+      default: return Math.sin(2 * Math.PI * p);
+    }
+  }
+  function modTick(dt) {
+    for (const m of state.mods) {
+      if (!m.on) continue;
+      const next = m.phase + m.rate * dt;
+      if (Math.floor(next) !== Math.floor(m.phase)) m.rnd = Math.random() * 2 - 1;
+      m.phase = frac(next);
+      const p = PARAMS[m.target];
+      if (m.base == null) m.base = p.get();
+      m.cur = clamp(toNorm(p, m.base) + modValue(m) * m.depth * 0.5, 0, 1);
+      setParam(m.target, fromNorm(p, m.cur), 0.03);
+    }
+  }
+  function modDisengage(m, restore = true) {
+    if (m.base != null && restore) setParam(m.target, m.base);
+    m.base = null; m.cur = null;
+  }
+  function setMod(k, changes) {
+    const m = state.mods[k];
+    if ((changes.target && changes.target !== m.target) || changes.on === false) modDisengage(m);
+    Object.assign(m, changes);
+    syncModUI(k);
+    refreshAutoGlow();
+  }
+  function fxTick(dt) {
+    gateTick();
+    modTick(dt);
+  }
+
+  // ---------------------------------------------------------------- effects UI
+  const gatorEl = document.getElementById('gator');
+  const echoEl = document.getElementById('echo');
+  const reverbEl = document.getElementById('reverb');
+  const modsEl = document.getElementById('mods');
+  const fxUI = {};
+
+  function setFxOn(which, on) {
+    state[which].on = on;
+    if (which === 'gator') gateRestart(transport.playing ? undefined : undefined);
+    updateFx();
+    syncFxUI();
+    markDirty();
+  }
+
+  function buildFxUI() {
+    gatorEl.innerHTML = `
+      <div class="panel-head"><h2>Gator — chop the sound in rhythm</h2>
+        <button type="button" class="toggle fx-on" data-info="gator">Off</button></div>
+      <canvas class="scope fxcanvas gate-canvas" data-info="gateGrid"></canvas>
+      <div class="chip-row" data-info="gateShape">${GATE_SHAPES.map((s) => `<button type="button" class="toggle" data-gshape="${s.id}">${s.label}</button>`).join('')}</div>
+      <div class="chip-row" data-info="gatePattern"><span class="dim small">Pattern</span>${Object.keys(GATE_PATTERNS).map((n) => `<button type="button" class="toggle" data-gpat="${n}">${n}</button>`).join('')}<button type="button" class="toggle" data-gpat="__random">🎲</button></div>
+      <div class="chip-row" data-info="gateRate"><span class="dim small">Speed</span><span class="seg">${[4, 8, 16, 32].map((r) => `<button type="button" data-grate="${r}">1/${r}</button>`).join('')}</span></div>
+      <div class="sliders">
+        <label data-info="gateDepth">Depth<output></output><input type="range" data-param="gateDepth"></label>
+        <label data-info="gateLen">Gate length<output></output><input type="range" data-param="gateLen"></label>
+        <label data-info="gateSmooth">Smoothing<output></output><input type="range" data-param="gateSmooth"></label>
+      </div>`;
+    echoEl.innerHTML = `
+      <div class="panel-head"><h2>Echo · Chorus · Delay</h2>
+        <button type="button" class="toggle fx-on" data-info="echo">Off</button></div>
+      <canvas class="scope fxcanvas" data-info="echoView"></canvas>
+      <div class="chip-row" data-info="echoModes">${Object.keys(DLY_MODES).map((n) => `<button type="button" class="toggle" data-dmode="${n}">${n}</button>`).join('')}</div>
+      <div class="chip-row" data-info="dlySync"><span class="dim small">Sync to tempo</span>
+        <select class="dly-sync">${Object.keys(DLY_SYNC).map((k) => `<option value="${k}">${k === 'off' ? 'free (ms)' : k}</option>`).join('')}</select></div>
+      <div class="sliders">
+        <label data-info="dlyMix">Mix<output></output><input type="range" data-param="dlyMix"></label>
+        <label data-info="dlyTime">Time<output></output><input type="range" data-param="dlyTime"></label>
+        <label data-info="dlyFb">Feedback<output></output><input type="range" data-param="dlyFb"></label>
+        <label data-info="dlyTone">Tone<output></output><input type="range" data-param="dlyTone"></label>
+        <label data-info="dlySpread">Stereo spread<output></output><input type="range" data-param="dlySpread"></label>
+        <label data-info="dlyRate">Wobble rate<output></output><input type="range" data-param="dlyRate"></label>
+        <label data-info="dlyDepth">Wobble depth<output></output><input type="range" data-param="dlyDepth"></label>
+      </div>`;
+    reverbEl.innerHTML = `
+      <div class="panel-head"><h2>Reverb — the room around the sound</h2>
+        <button type="button" class="toggle fx-on" data-info="reverb">Off</button></div>
+      <canvas class="scope fxcanvas" data-info="revView"></canvas>
+      <div class="chip-row" data-info="revModes">${Object.keys(REV_MODES).map((n) => `<button type="button" class="toggle" data-rmode="${n}">${n}</button>`).join('')}</div>
+      <div class="sliders">
+        <label data-info="revMix">Mix<output></output><input type="range" data-param="revMix"></label>
+        <label data-info="revSize">Decay (size)<output></output><input type="range" data-param="revSize"></label>
+        <label data-info="revPre">Pre-delay<output></output><input type="range" data-param="revPre"></label>
+        <label data-info="revDamp">Damping<output></output><input type="range" data-param="revDamp"></label>
+      </div>`;
+    modsEl.innerHTML = state.mods.map((m, k) => `
+      <div class="modrow" data-m="${k}">
+        <div class="lane-head">
+          <button type="button" class="toggle mod-on" data-info="mods">Mod ${k + 1}</button>
+          <label data-info="modTarget">Wobbles <select class="mod-target">${AUTO_TARGETS.map((t) => `<option value="${t}">${PARAMS[t].label}</option>`).join('')}</select></label>
+          <span class="shapes" data-info="modShape">${MOD_SHAPES.map((s) => `<button type="button" class="toggle" data-mshape="${s.id}">${s.label}</button>`).join('')}</span>
+          <label data-info="modRate">Rate <input type="range" class="mod-rate" min="0" max="1" step="0.001"><output class="mod-rate-out"></output></label>
+          <label data-info="modDepth">Depth <input type="range" class="mod-depth" min="0" max="1" step="0.01"><output class="mod-depth-out"></output></label>
+        </div>
+        <canvas class="scope modcanvas" data-info="mods"></canvas>
+      </div>`).join('');
+
+    fxUI.gateOn = gatorEl.querySelector('.fx-on');
+    fxUI.echoOn = echoEl.querySelector('.fx-on');
+    fxUI.revOn = reverbEl.querySelector('.fx-on');
+    fxUI.gateCanvas = gatorEl.querySelector('canvas');
+    fxUI.echoCanvas = echoEl.querySelector('canvas');
+    fxUI.revCanvas = reverbEl.querySelector('canvas');
+    fxUI.sync = echoEl.querySelector('.dly-sync');
+    fxUI.gateOn.addEventListener('click', () => { if (!ensureAudio()) return; setFxOn('gator', !state.gator.on); });
+    fxUI.echoOn.addEventListener('click', () => { if (!ensureAudio()) return; setFxOn('dly', !state.dly.on); });
+    fxUI.revOn.addEventListener('click', () => { if (!ensureAudio()) return; setFxOn('rev', !state.rev.on); });
+    gatorEl.querySelectorAll('[data-gshape]').forEach((b) => b.addEventListener('click', () => { state.gator.shape = b.dataset.gshape; if (!state.gator.on && ensureAudio()) setFxOn('gator', true); syncFxUI(); }));
+    gatorEl.querySelectorAll('[data-gpat]').forEach((b) => b.addEventListener('click', () => {
+      const n = b.dataset.gpat;
+      state.gator.steps = n === '__random'
+        ? Array.from({ length: 16 }, (_, i) => (i === 0 || Math.random() < 0.6 ? (Math.random() < 0.7 ? 1 : 0.55) : 0))
+        : parseGate(GATE_PATTERNS[n]);
+      if (!state.gator.on && ensureAudio()) setFxOn('gator', true);
+    }));
+    gatorEl.querySelectorAll('[data-grate]').forEach((b) => b.addEventListener('click', () => { state.gator.rate = Number(b.dataset.grate); syncFxUI(); }));
+    echoEl.querySelectorAll('[data-dmode]').forEach((b) => b.addEventListener('click', () => {
+      if (!ensureAudio()) return;
+      Object.assign(state.dly, DLY_MODES[b.dataset.dmode], { on: true });
+      applyDelaySync();
+      ['dlyMix', 'dlyTime', 'dlyFb', 'dlyTone', 'dlySpread', 'dlyRate', 'dlyDepth'].forEach(syncParam);
+      updateFx(); syncFxUI();
+      showInfo('echoModes');
+    }));
+    fxUI.sync.addEventListener('change', () => { state.dly.sync = fxUI.sync.value; applyDelaySync(); });
+    reverbEl.querySelectorAll('[data-rmode]').forEach((b) => b.addEventListener('click', () => {
+      if (!ensureAudio()) return;
+      Object.assign(state.rev, REV_MODES[b.dataset.rmode], { on: true });
+      ['revMix', 'revSize', 'revPre', 'revDamp'].forEach(syncParam);
+      buildIR(); updateFx(); syncFxUI();
+      showInfo('revModes');
+    }));
+
+    // drawing on the gator grid sets each step's level
+    let painting = false;
+    const paintGate = (e) => {
+      const r = fxUI.gateCanvas.getBoundingClientRect();
+      const s = clamp(Math.floor(((e.clientX - r.left) / r.width) * 16), 0, 15);
+      let v = clamp(1 - (e.clientY - r.top) / r.height, 0, 1);
+      if (v < 0.1) v = 0;
+      state.gator.steps[s] = Math.round(v * 20) / 20;
+    };
+    fxUI.gateCanvas.addEventListener('pointerdown', (e) => {
+      fxUI.gateCanvas.setPointerCapture(e.pointerId);
+      painting = true;
+      if (!state.gator.on && ensureAudio()) setFxOn('gator', true);
+      paintGate(e);
+    });
+    fxUI.gateCanvas.addEventListener('pointermove', (e) => { if (painting) paintGate(e); });
+    fxUI.gateCanvas.addEventListener('pointerup', () => { painting = false; });
+    fxUI.gateCanvas.addEventListener('pointercancel', () => { painting = false; });
+
+    fxUI.mods = state.mods.map((m, k) => {
+      const root = modsEl.querySelector(`.modrow[data-m="${k}"]`);
+      const ui = {
+        on: root.querySelector('.mod-on'),
+        target: root.querySelector('.mod-target'),
+        shapes: [...root.querySelectorAll('[data-mshape]')],
+        rate: root.querySelector('.mod-rate'),
+        rateOut: root.querySelector('.mod-rate-out'),
+        depth: root.querySelector('.mod-depth'),
+        depthOut: root.querySelector('.mod-depth-out'),
+        canvas: root.querySelector('canvas'),
+      };
+      ui.on.addEventListener('click', () => { ensureAudio(); setMod(k, { on: !state.mods[k].on }); });
+      ui.target.addEventListener('change', () => setMod(k, { target: ui.target.value }));
+      ui.shapes.forEach((b) => b.addEventListener('click', () => setMod(k, { shape: b.dataset.mshape })));
+      ui.rate.addEventListener('input', () => setMod(k, { rate: 0.05 * Math.pow(200, Number(ui.rate.value)) }));
+      ui.depth.addEventListener('input', () => setMod(k, { depth: Number(ui.depth.value) }));
+      return ui;
+    });
+  }
+
+  function syncModUI(k) {
+    const m = state.mods[k];
+    const ui = fxUI.mods && fxUI.mods[k];
+    if (!ui) return;
+    ui.on.classList.toggle('on', m.on);
+    ui.target.value = m.target;
+    ui.shapes.forEach((b) => b.classList.toggle('on', b.dataset.mshape === m.shape));
+    ui.rate.value = Math.log(m.rate / 0.05) / Math.log(200);
+    ui.rateOut.textContent = fmtHz(m.rate);
+    ui.depth.value = m.depth;
+    ui.depthOut.textContent = fmtPct(m.depth);
+  }
+
+  function syncFxUI() {
+    const g = state.gator;
+    fxUI.gateOn.classList.toggle('on', g.on); fxUI.gateOn.textContent = g.on ? 'On' : 'Off';
+    fxUI.echoOn.classList.toggle('on', state.dly.on); fxUI.echoOn.textContent = state.dly.on ? 'On' : 'Off';
+    fxUI.revOn.classList.toggle('on', state.rev.on); fxUI.revOn.textContent = state.rev.on ? 'On' : 'Off';
+    gatorEl.querySelectorAll('[data-gshape]').forEach((b) => b.classList.toggle('on', b.dataset.gshape === g.shape));
+    gatorEl.querySelectorAll('[data-grate]').forEach((b) => b.classList.toggle('on', Number(b.dataset.grate) === g.rate));
+    fxUI.sync.value = state.dly.sync;
+    gatorEl.classList.toggle('fx-off', !g.on);
+    echoEl.classList.toggle('fx-off', !state.dly.on);
+    reverbEl.classList.toggle('fx-off', !state.rev.on);
+    state.mods.forEach((m, k) => syncModUI(k));
+    syncChain();
+  }
+
+  // ---------------------------------------------------------------- effects pictures
+  let lastHit = -10;   // audio time of the most recent note start (echo taps and reverb rings follow it)
+
+  function drawGator() {
+    const c = cv(fxUI.gateCanvas);
+    if (!c) return;
+    const { g, w, h } = c;
+    g.clearRect(0, 0, w, h);
+    const gp = gatePos();
+    const cw = w / 16;
+    for (let s = 0; s < 16; s++) {
+      const x0 = s * cw;
+      g.fillStyle = s % 4 === 0 ? '#161b27' : '#11151e';
+      g.fillRect(x0, 0, cw, h);
+      const lvl = state.gator.steps[s];
+      const active = gp && gp.s === s;
+      // the shape of this gate, drawn as the volume over the step
+      g.beginPath();
+      g.moveTo(x0 + 1, h - 2);
+      for (let k = 0; k <= 24; k++) {
+        const p = k / 24;
+        const v = 1 - state.gator.depth * (1 - gateLevelAt(lvl, p));
+        g.lineTo(x0 + 1 + p * (cw - 2), h - 2 - v * (h - 6));
+      }
+      g.lineTo(x0 + cw - 1, h - 2);
+      g.closePath();
+      const hue = 150 + 60 * lvl;
+      g.fillStyle = `hsla(${hue}, 80%, ${active ? 65 : 45}%, ${state.gator.on ? (active ? 0.95 : 0.6) : 0.25})`;
+      g.fill();
+      if (active) {
+        g.fillStyle = '#fff';
+        g.fillRect(x0 + gp.f * cw - 1, 0, 2, h);
+      }
+      g.strokeStyle = '#2a3142';
+      g.strokeRect(x0 + 0.5, 0.5, cw - 1, h - 1);
+    }
+    if (gp) {
+      const lvl = state.gator.steps[gp.s];
+      const vol = 1 - state.gator.depth * (1 - gateLevelAt(lvl, gp.f));
+      label(g, `volume now ${fmtPct(vol)}`, w - 6, 13, '#fff', 'right');
+    } else {
+      label(g, state.gator.on ? 'starting…' : 'off — click a step or a pattern to start', w - 6, 13, '#8a93a8', 'right');
+    }
+  }
+
+  function drawEcho() {
+    const c = cv(fxUI.echoCanvas);
+    if (!c) return;
+    const { g, w, h } = c;
+    g.clearRect(0, 0, w, h);
+    const d = state.dly;
+    const span = clamp(d.time * 9, 0.08, 4);
+    const X = (t) => 8 + (t / span) * (w - 16);
+    const base = h - 14;
+    g.strokeStyle = '#1c2230';
+    g.beginPath(); g.moveTo(0, base); g.lineTo(w, base); g.stroke();
+    const now = actx ? actx.currentTime : 0;
+    const age = now - lastHit;
+    const wob = d.depth * Math.sin(2 * Math.PI * d.rate * (actx ? now : performance.now() / 1000));
+    // dry hit
+    const flash0 = Math.max(0, 1 - age / 0.15);
+    g.fillStyle = `rgba(255,255,255,${0.6 + 0.4 * flash0})`;
+    g.fillRect(X(0) - 2, base - (h - 30), 4, h - 30);
+    label(g, 'dry', X(0) + 4, 13, '#8a93a8');
+    for (let n = 1; n < 40; n++) {
+      const t = n * d.time + (n % 2 ? wob : -wob);
+      if (t > span) break;
+      const amp = (d.on ? d.mix : 0.15) * Math.pow(d.fb, n - 1) * (d.time < 0.04 && n === 1 ? 1 : 1);
+      if (amp < 0.004) break;
+      const right = n % 2 === 0;
+      const tapPan = right ? d.spread : -d.spread;
+      const bright = clamp(Math.log(d.tone / 300) / Math.log(60), 0.15, 1) * Math.pow(0.85, n - 1);
+      const hit = Math.max(0, 1 - Math.abs(age - n * d.time) / 0.08);
+      const hgt = amp * (h - 30) * (1 + 0.3 * hit);
+      g.fillStyle = tapPan < -0.05 ? `hsla(330, 90%, ${45 + 25 * bright + 20 * hit}%, 0.9)` : tapPan > 0.05 ? `hsla(190, 90%, ${45 + 25 * bright + 20 * hit}%, 0.9)` : `hsla(50, 90%, ${45 + 25 * bright + 20 * hit}%, 0.9)`;
+      g.shadowColor = g.fillStyle;
+      g.shadowBlur = 14 * hit;
+      g.fillRect(X(t) - 2, base - hgt, 4, hgt);
+      g.shadowBlur = 0;
+    }
+    // travelling pulse since the last note
+    if (age >= 0 && age < span) {
+      g.fillStyle = 'rgba(94,230,196,0.8)';
+      g.beginPath(); g.arc(X(age), base + 6, 3, 0, Math.PI * 2); g.fill();
+    }
+    const kind = d.time < 0.006 ? 'flanger' : d.time < 0.04 ? 'chorus' : d.time < 0.12 ? 'slapback' : 'echo';
+    label(g, `${kind} · ${fmtMs(d.time)} · ${d.sync !== 'off' ? d.sync + ' note' : 'free'} · ${d.on ? 'on' : 'off'}`, w - 6, 13, d.on ? '#fff' : '#8a93a8', 'right');
+    label(g, 'L', 4, h - 2, 'hsl(330,90%,65%)');
+    label(g, 'R', 16, h - 2, 'hsl(190,90%,65%)');
+    label(g, `${fmtMs(span)} →`, w - 6, h - 2, '#5b6478', 'right');
+  }
+
+  // fixed noise texture for the reverb picture
+  const revNoise = Float32Array.from({ length: 400 }, () => Math.random());
+  function drawReverb() {
+    const c = cv(fxUI.revCanvas);
+    if (!c) return;
+    const { g, w, h } = c;
+    g.clearRect(0, 0, w, h);
+    const r = state.rev;
+    const span = Math.max(1, r.size * 1.25);
+    const split = w * 0.62;
+    const X = (t) => 6 + (t / span) * (split - 12);
+    const base = h - 12;
+    const bright = clamp(Math.log(r.damp / 500) / Math.log(36), 0, 1);
+    // decay picture: noise inside an exponential envelope, after the pre-delay
+    g.beginPath();
+    g.moveTo(X(0), base);
+    for (let k = 0; k < revNoise.length; k++) {
+      const t = r.pre + (k / revNoise.length) * (span - r.pre);
+      const env = Math.exp((-6.9 * (t - r.pre)) / r.size);
+      g.lineTo(X(t), base - env * (0.35 + 0.65 * revNoise[k]) * (h - 26) * (r.on ? 1 : 0.5));
+    }
+    g.lineTo(X(span), base);
+    g.closePath();
+    g.fillStyle = `hsla(${210 - 170 * bright}, 70%, ${35 + 20 * bright}%, ${r.on ? 0.8 : 0.3})`;
+    g.fill();
+    g.fillStyle = '#fff';
+    g.fillRect(X(0) - 1, 18, 2, base - 18);
+    if (r.pre > 0.002) label(g, `pre ${Math.round(r.pre * 1000)} ms`, X(r.pre) + 3, 26, '#8a93a8');
+    g.strokeStyle = 'rgba(255,255,255,0.3)';
+    g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(X(r.size), 18); g.lineTo(X(r.size), base); g.stroke();
+    g.setLineDash([]);
+    label(g, `−60 dB at ${r.size.toFixed(1)} s`, Math.min(X(r.size) + 3, split - 70), 40, '#8a93a8');
+    // the room: rings spreading from the last note, fading as the reverb dies
+    const cx = split + (w - split) / 2, cy = h / 2;
+    const roomR = Math.min((w - split) / 2, h / 2) - 6;
+    const roomScale = clamp(Math.log(r.size / 0.2) / Math.log(50), 0.25, 1);
+    g.strokeStyle = '#2a3142';
+    g.strokeRect(cx - roomR * roomScale, cy - roomR * roomScale, 2 * roomR * roomScale, 2 * roomR * roomScale);
+    const age = actx ? actx.currentTime - lastHit : 99;
+    if (r.on && age >= 0) {
+      for (let k = 0; k < 5; k++) {
+        const a = age - k * 0.12;
+        if (a < 0) continue;
+        const rad = (a * 160) % (roomR * roomScale * 1.4);
+        const alpha = Math.exp((-6.9 * a) / r.size) * 0.8;
+        if (alpha < 0.02) continue;
+        g.strokeStyle = `hsla(${210 - 170 * bright}, 80%, 65%, ${alpha})`;
+        g.lineWidth = 2;
+        g.beginPath(); g.arc(cx, cy, rad, 0, Math.PI * 2); g.stroke();
+      }
+      g.lineWidth = 1;
+    }
+    g.fillStyle = '#fff';
+    g.beginPath(); g.arc(cx, cy, 3, 0, Math.PI * 2); g.fill();
+    label(g, r.on ? `mix ${fmtPct(r.mix)}` : 'off', w - 6, 13, r.on ? '#fff' : '#8a93a8', 'right');
+  }
+
+  function drawMods() {
+    state.mods.forEach((m, k) => {
+      const ui = fxUI.mods[k];
+      const c = cv(ui.canvas);
+      if (!c) return;
+      const { g, w, h } = c;
+      g.clearRect(0, 0, w, h);
+      const saved = { phase: m.phase, rnd: m.rnd };
+      g.strokeStyle = m.on ? '#7cf3c9' : '#3a4358';
+      g.lineWidth = 2;
+      g.beginPath();
+      for (let x = 0; x <= w; x++) {
+        m.phase = frac(saved.phase + (x / w) * 2 - 1);
+        if (m.shape === 'random') m.rnd = Math.sin(Math.floor(saved.phase + (x / w) * 2 - 1) * 12.9898) % 1;
+        const y = h / 2 - modValue(m) * (h / 2 - 6) * Math.max(0.15, m.depth);
+        if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
+      m.phase = saved.phase; m.rnd = saved.rnd;
+      g.fillStyle = '#fff';
+      g.beginPath(); g.arc(w / 2, h / 2 - modValue(m) * (h / 2 - 6) * Math.max(0.15, m.depth), 5, 0, Math.PI * 2); g.fill();
+      const p = PARAMS[m.target];
+      label(g, m.on ? `${p.label} → ${p.fmt(p.get())}` : 'off — click “Mod ' + (k + 1) + '” to start wobbling a knob', w - 6, 13, m.on ? '#fff' : '#8a93a8', 'right');
+    });
+  }
+
+  // ---------------------------------------------------------------- signal chain strip
+  const chainEl = document.getElementById('chain');
+  function syncChain() {
+    if (!chainEl) return;
+    const on = { gator: state.gator.on, echo: state.dly.on, reverb: state.rev.on, filter: state.cutoff < 17000 || state.res > 0.5 };
+    chainEl.querySelectorAll('[data-stage]').forEach((el) => {
+      const s = el.dataset.stage;
+      if (s in on) el.classList.toggle('bypass', !on[s]);
+    });
+  }
+  if (chainEl) {
+    chainEl.querySelectorAll('[data-stage]').forEach((el) => el.addEventListener('click', () => {
+      const target = document.getElementById(el.dataset.scroll);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }));
+  }
+  function drawChain(env) {
+    if (!chainEl) return;
+    chainEl.style.setProperty('--lvl', env.toFixed(2));
+  }
+
+  // ================================================================ inspire: surprise me & mutate
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const inspireMsg = (html) => { presetDesc.innerHTML = html; };
+
+  function surprise() {
+    const kind = pick(['Bass', 'Pad', 'Lead', 'Pluck', 'Keys', 'FX']);
+    const shapes = ['sine', 'triangle', 'square', 'saw', 'rsaw'];
+    const intervals = [0, 0, 7, 12, -12, 5, 19, 24, 3, 4];
+    const osc = [0, 1, 2].map((i) => ({
+      shape: kind === 'FX' && i === 2 && Math.random() < 0.5 ? 'noise' : pick(shapes),
+      coarse: i === 0 ? 0 : pick(intervals) + (kind === 'Bass' && i === 2 ? -12 : 0),
+      fine: Math.round(rnd(-14, 14) * (kind === 'Pad' || kind === 'Lead' ? 1.4 : 0.6)),
+      vol: i === 0 ? rnd(0.55, 0.8) : Math.random() < 0.2 ? 0 : rnd(0.2, 0.6),
+      pan: kind === 'Pad' ? rnd(-0.7, 0.7) : rnd(-0.25, 0.25),
+    }));
+    const env = {
+      Bass: [0.005, rnd(0.15, 0.5), rnd(0.3, 1), 0.15], Pad: [rnd(0.4, 1.8), 1, rnd(0.6, 0.9), rnd(1.2, 3)],
+      Lead: [0.01, 0.3, rnd(0.6, 0.9), 0.3], Pluck: [0.002, rnd(0.15, 0.4), 0, 0.3], Keys: [0.003, rnd(0.5, 1.5), rnd(0.2, 0.5), 0.6],
+      FX: [rnd(0.01, 1), 0.5, rnd(0.5, 1), rnd(0.5, 2)],
+    }[kind];
+    const cutoff = { Bass: rnd(200, 1500), Pad: rnd(600, 4000), Lead: rnd(1500, 8000), Pluck: rnd(300, 1500), Keys: rnd(1500, 9000), FX: rnd(300, 6000) }[kind];
+    const P = {
+      osc, env, cutoff, res: rnd(0, kind === 'Bass' || kind === 'FX' ? 16 : 8), fenv: kind === 'Pluck' || kind === 'Bass' ? rnd(1.5, 4.5) : rnd(0, 1.5),
+      am: Math.random() < 0.15,
+      dly: Math.random() < 0.6 ? { ...pick(Object.values(DLY_MODES)) } : null,
+      rev: Math.random() < 0.7 ? { ...pick(Object.values(REV_MODES)) } : null,
+      gator: (kind === 'Pad' || kind === 'FX') && Math.random() < 0.45 ? { pattern: pick(Object.values(GATE_PATTERNS)), shape: pick(GATE_SHAPES).id, rate: pick([8, 16, 16, 32]) } : null,
+    };
+    if (P.am) P.osc[2] = { shape: 'sine', fixed: true, hz: rnd(2, 9), vol: rnd(0.4, 1) };
+    const scale = pick([[0, 3, 5, 7, 10, 12], [0, 2, 4, 7, 9, 12], [0, 2, 3, 5, 7, 8, 10, 12]]);
+    const density = { Bass: 0.55, Pad: 0.15, Lead: 0.5, Pluck: 0.7, Keys: 0.4, FX: 0.15 }[kind];
+    const seq = Array.from({ length: 16 }, (_, s) => (s === 0 || Math.random() < density ? pick(scale) : -1));
+    const demo = {
+      bpm: Math.round(rnd(kind === 'Pad' ? 70 : 100, kind === 'Pad' ? 100 : 140)),
+      root: { Bass: 33 + Math.floor(rnd(0, 6)), Pad: 48, Lead: 60, Pluck: 60, Keys: 60, FX: 48 }[kind],
+      gate: kind === 'Pad' || kind === 'FX' ? 1 : rnd(0.35, 0.85),
+      bars: kind === 'Pad' ? 2 : 1,
+      seq: seq.map((n) => (n < 0 ? '.' : n)).join(' '),
+      lanes: Math.random() < 0.5 ? [{ target: pick(['cutoff', 'cutoff', 'dlyMix', 'res', 'pitch']), shape: pick(['sine', 'tri', 'up', 'rise']), cycles: pick([1, 2, 4]), lo: rnd(0.2, 0.5), hi: rnd(0.55, 0.85) }] : [],
+    };
+    if (demo.lanes[0] && demo.lanes[0].target === 'pitch') Object.assign(demo.lanes[0], { lo: 0.72, hi: 0.78 });
+    loadPreset({ name: `Surprise ${kind}`, desc: describePatch(P, kind), ...P, demo }, true);
+  }
+
+  function describePatch(P, kind) {
+    const on = P.osc.filter((o) => o.vol > 0);
+    const shapesTxt = on.map((o) => (o.fixed ? `a ${o.hz.toFixed(1)} Hz LFO` : `${o.shape === 'rsaw' ? 'rounded saw' : o.shape}${o.coarse ? ` at ${o.coarse > 0 ? '+' : ''}${o.coarse} st` : ''}`)).join(', ');
+    const fxTxt = [P.gator && 'a rhythmic gator', P.dly && `${P.dly.time && P.dly.time < 0.04 ? 'chorus' : 'echo'}`, P.rev && `${P.rev.size > 5 ? 'huge' : P.rev.size > 2 ? 'hall' : 'room'} reverb`].filter(Boolean).join(', ');
+    return `A random <b>${kind.toLowerCase()}</b>: ${shapesTxt}, through a ${fmtHz(P.cutoff)} filter${fxTxt ? `, with ${fxTxt}` : ''}. Like it? Save it in <b>My sounds</b>. Not quite? Press <b>Mutate</b>.`;
+  }
+
+  function mutate() {
+    if (!ensureAudio()) return;
+    const amt = 0.25;
+    const changes = [];
+    for (let i = 0; i < 3; i++) {
+      const o = state.osc[i];
+      if (Math.random() < 0.18) {
+        const s = pick(['sine', 'triangle', 'square', 'saw', 'rsaw']);
+        if (s !== o.shape && o.shape !== 'noise') { setOscProp(i, 'shape', s); changes.push(`Osc ${i + 1} → ${s}`); }
+      }
+      setParam(`o${i}.fine`, o.fine + Math.round(rnd(-12, 12) * amt * 2));
+      if (o.vol > 0) setParam(`o${i}.vol`, clamp(o.vol + rnd(-0.15, 0.15), 0.1, 1));
+      if (Math.random() < 0.12 && !o.fixed) { const c = pick([-12, 12, 7, -5]); setParam(`o${i}.coarse`, clamp(o.coarse + c, -36, 36)); changes.push(`Osc ${i + 1} ${c > 0 ? '+' : ''}${c} st`); }
+    }
+    setParam('cutoff', state.cutoff * Math.pow(2, rnd(-1, 1) * amt * 3));
+    setParam('res', clamp(state.res + rnd(-3, 3), 0, 20));
+    if (state.dly.on) { setParam('dlyFb', clamp(state.dly.fb + rnd(-0.15, 0.15), 0, 0.85)); setParam('dlyMix', clamp(state.dly.mix + rnd(-0.1, 0.1), 0.05, 0.8)); }
+    if (state.rev.on) setParam('revMix', clamp(state.rev.mix + rnd(-0.1, 0.1), 0.05, 0.8));
+    if (Math.random() < 0.3) { const s = Math.floor(rnd(0, 16)); state.seq[s] = state.seq[s] < 0 ? pick([0, 3, 5, 7, 12]) : -1; changes.push(`step ${s + 1} changed`); }
+    inspireMsg(`<b>Mutated</b>: small random nudges to tuning, levels, filter${state.dly.on || state.rev.on ? ' and effects' : ''}${changes.length ? ' — ' + changes.join(', ') : ''}. Keep pressing to evolve the sound.`);
+    if (!transport.playing && !activeVoices.size) { const v = new Voice(state.seqRoot + 12, 0.9); v.release(actx.currentTime + 0.6); }
+  }
+
+  document.getElementById('surpriseBtn').addEventListener('click', surprise);
+  document.getElementById('mutateBtn').addEventListener('click', mutate);
+
+  // ================================================================ my sounds: save, share link, record
+  const STORE_KEY = '3xoso.sounds.v1';
+  function getPatch() {
+    const r2 = (v) => Math.round(v * 1000) / 1000;
+    return {
+      v: 1,
+      osc: state.osc.map((o) => ({ ...o })), am: state.am, cutoff: r2(state.cutoff), res: state.res, fenv: state.fenv,
+      env: [state.attack, state.decay, state.sustain, state.release], master: state.master,
+      gator: { ...state.gator, steps: [...state.gator.steps] }, dly: { ...state.dly }, rev: { ...state.rev },
+      demo: {
+        bpm: state.bpm, bars: state.bars, gate: state.gate, root: state.seqRoot, loop: state.loop,
+        seq: state.seq.map((n) => (n < 0 ? '.' : n)).join(' '),
+        lanes: state.lanes.map((l) => (l.on ? { target: l.target, shape: l.shape, cycles: l.cycles, lo: r2(l.lo), hi: r2(l.hi), pts: l.shape === 'draw' ? Array.from(l.pts, r2) : undefined } : null)),
+      },
+      mods: state.mods.map((m) => ({ on: m.on, target: m.target, shape: m.shape, rate: r2(m.rate), depth: m.depth })),
+    };
+  }
+  // Patches from links or storage are untrusted: keep only known keys with sane values.
+  function sanitizePatch(P) {
+    if (!P || typeof P !== 'object' || !Array.isArray(P.osc)) return null;
+    const num = (v, a, b, d) => (Number.isFinite(Number(v)) ? clamp(Number(v), a, b) : d);
+    const one = (v, list, d) => (list.includes(v) ? v : d);
+    const shapes = SHAPES.map((s) => s.id);
+    const osc = [0, 1, 2].map((i) => {
+      const o = P.osc[i] || {};
+      return {
+        shape: one(o.shape, shapes, 'sine'), coarse: Math.round(num(o.coarse, -48, 48, 0)), fine: Math.round(num(o.fine, -100, 100, 0)),
+        vol: num(o.vol, 0, 1, 0), pan: num(o.pan, -1, 1, 0), phase: Math.round(num(o.phase, 0, 360, 0)),
+        invert: !!o.invert, mute: !!o.mute, solo: !!o.solo, fixed: !!o.fixed, hz: num(o.hz, 0.1, 8000, 2),
+      };
+    });
+    const env = Array.isArray(P.env) ? [num(P.env[0], 0.001, 4, 0.01), num(P.env[1], 0.01, 4, 0.3), num(P.env[2], 0, 1, 0.8), num(P.env[3], 0.01, 6, 0.3)] : undefined;
+    const g = P.gator && typeof P.gator === 'object' ? {
+      on: !!P.gator.on, depth: num(P.gator.depth, 0, 1, 1), len: num(P.gator.len, 0.05, 1, 0.7), smooth: num(P.gator.smooth, 0, 0.5, 0.08),
+      rate: one(Number(P.gator.rate), [4, 8, 16, 32], 16), shape: one(P.gator.shape, GATE_SHAPES.map((x) => x.id), 'square'),
+      steps: Array.from({ length: 16 }, (_, k) => num(Array.isArray(P.gator.steps) ? P.gator.steps[k] : 0, 0, 1, 0)),
+    } : null;
+    const d = P.dly && typeof P.dly === 'object' ? {
+      on: !!P.dly.on, mix: num(P.dly.mix, 0, 1, 0.35), time: num(P.dly.time, 0.001, 1.5, 0.375), fb: num(P.dly.fb, 0, 0.95, 0.4), tone: num(P.dly.tone, 300, 18000, 4000),
+      spread: num(P.dly.spread, 0, 1, 0.6), rate: num(P.dly.rate, 0.05, 8, 0.5), depth: num(P.dly.depth, 0, 0.012, 0), sync: one(P.dly.sync, Object.keys(DLY_SYNC), 'off'),
+    } : null;
+    const r = P.rev && typeof P.rev === 'object' ? { on: !!P.rev.on, mix: num(P.rev.mix, 0, 1, 0.3), size: num(P.rev.size, 0.2, 10, 2.5), pre: num(P.rev.pre, 0, 0.25, 0.02), damp: num(P.rev.damp, 500, 18000, 7000) } : null;
+    const laneShapes = [...LANE_SHAPES.map((x) => x.id), 'draw'];
+    const dm = P.demo && typeof P.demo === 'object' ? P.demo : null;
+    const demo = dm ? {
+      bpm: Math.round(num(dm.bpm, 60, 180, 120)), bars: one(Number(dm.bars), [1, 2, 4], 1), gate: num(dm.gate, 0.1, 1, 0.5), root: Math.round(num(dm.root, 24, 72, 48)), loop: dm.loop !== false,
+      seq: typeof dm.seq === 'string' ? dm.seq.split(/\s+/).slice(0, 16).map((t) => (t === '.' ? '.' : String(Math.round(num(t, 0, 12, 0))))).join(' ') : undefined,
+      lanes: Array.isArray(dm.lanes) ? dm.lanes.slice(0, 3).map((l) => (l && AUTO_TARGETS.includes(l.target) ? {
+        target: l.target, shape: one(l.shape, laneShapes, 'sine'), cycles: one(Number(l.cycles), [1, 2, 4, 8, 16], 1), lo: num(l.lo, 0, 1, 0.1), hi: num(l.hi, 0, 1, 0.9),
+        pts: Array.isArray(l.pts) ? Array.from({ length: LANE_PTS }, (_, k) => num(l.pts[k], 0, 1, 0)) : undefined,
+      } : null)) : [],
+    } : undefined;
+    const mods = Array.isArray(P.mods) ? P.mods.slice(0, 2).map((m) => (m && AUTO_TARGETS.includes(m.target) ? {
+      on: !!m.on, target: m.target, shape: one(m.shape, MOD_SHAPES.map((x) => x.id), 'sine'), rate: num(m.rate, 0.05, 10, 0.5), depth: num(m.depth, 0, 1, 0.4),
+    } : null)) : undefined;
+    return {
+      osc, env, am: !!P.am, cutoff: num(P.cutoff, 30, 18000, 18000), res: num(P.res, 0, 24, 0), fenv: num(P.fenv, 0, 6, 0), master: num(P.master, 0, 1, 0.6),
+      gatorFull: g, dlyFull: d, revFull: r, mods, demo,
+    };
+  }
+
+  function loadStore() { try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); } catch (e) { return []; } }
+  function saveStore(list) { try { localStorage.setItem(STORE_KEY, JSON.stringify(list)); return true; } catch (e) { return false; } }
+
+  const soundsList = document.getElementById('soundsList');
+  const soundName = document.getElementById('soundName');
+  const soundsMsg = document.getElementById('soundsMsg');
+  function renderSounds() {
+    const list = loadStore();
+    soundsList.innerHTML = '';
+    if (!list.length) { soundsList.innerHTML = '<li class="dim small">Nothing saved yet.</li>'; return; }
+    list.forEach((s, k) => {
+      const li = document.createElement('li');
+      const load = document.createElement('button');
+      load.type = 'button'; load.className = 'toggle'; load.textContent = s.name;
+      load.addEventListener('click', () => { loadPreset({ ...sanitizePatch(s.patch), name: s.name, desc: 'One of your saved sounds.' }, true); });
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'toggle del'; del.textContent = '×'; del.title = 'Delete';
+      del.addEventListener('click', () => { const l = loadStore(); l.splice(k, 1); saveStore(l); renderSounds(); });
+      li.append(load, del);
+      soundsList.appendChild(li);
+    });
+  }
+  document.getElementById('saveSound').addEventListener('click', () => {
+    const name = (soundName.value || '').trim() || `My sound ${loadStore().length + 1}`;
+    const list = loadStore();
+    list.unshift({ name: name.slice(0, 40), patch: getPatch(), date: Date.now() });
+    soundsMsg.textContent = saveStore(list.slice(0, 50)) ? `Saved “${name}” in this browser.` : 'Could not save (browser storage is blocked).';
+    soundName.value = '';
+    renderSounds();
+  });
+  document.getElementById('shareSound').addEventListener('click', async () => {
+    const json = JSON.stringify(getPatch());
+    const b64 = btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const url = `${location.origin}${location.pathname}#p=${b64}`;
+    try { await navigator.clipboard.writeText(url); soundsMsg.textContent = 'Share link copied — paste it anywhere. Opening it loads this exact sound.'; }
+    catch (e) { soundsMsg.textContent = 'Your browser blocked copying — copy the address from the address bar instead; it now contains this sound.'; }
+    history.replaceState(null, '', '#p=' + b64);
+  });
+  function loadFromHash() {
+    const m = location.hash.match(/^#p=([A-Za-z0-9_-]+)/);
+    if (!m) return false;
+    try {
+      let b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      const P = sanitizePatch(JSON.parse(decodeURIComponent(escape(atob(b64)))));
+      if (!P) return false;
+      loadPreset({ ...P, name: 'Shared sound', desc: 'Loaded from a share link. Press <b>▶ Play</b> to hear it.' }, false);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // Recorder: taps the final output and writes a 16-bit stereo WAV.
+  const rec = { node: null, chunks: [], on: false, start: 0, frames: 0 };
+  const recBtn = document.getElementById('recBtn');
+  const recOut = document.getElementById('recOut');
+  async function startRecording() {
+    if (!ensureAudio()) return;
+    if (!rec.node) {
+      try { await makeWorkletRecorder(); } catch (e) { makeScriptRecorder(); }
+    }
+    rec.chunks = []; rec.frames = 0; rec.on = true; rec.start = performance.now();
+    if (rec.node.port) rec.node.port.postMessage(true);
+    recBtn.classList.add('rec-on');
+    recBtn.textContent = '■ Stop recording';
+    recOut.innerHTML = '';
+  }
+  const onRecChunk = (pair) => {
+    if (!rec.on) return;
+    rec.chunks.push(pair);
+    rec.frames += pair[0].length;
+    if (rec.frames > actx.sampleRate * 300) stopRecording();
+  };
+  // Fallback for browsers/pages where AudioWorklet modules cannot load (e.g. opened from a file).
+  function makeScriptRecorder() {
+    const node = actx.createScriptProcessor(4096, 2, 2);
+    node.onaudioprocess = (e) => onRecChunk([e.inputBuffer.getChannelData(0).slice(0), e.inputBuffer.getChannelData(1).slice(0)]);
+    const sink = actx.createGain(); sink.gain.value = 0;
+    analyser.connect(node).connect(sink).connect(actx.destination);
+    rec.node = node;
+  }
+  async function makeWorkletRecorder() {
+    {
+      if (!actx.audioWorklet) throw new Error('no AudioWorklet');
+      const src = 'class R extends AudioWorkletProcessor{constructor(){super();this.on=false;this.port.onmessage=(e)=>{this.on=e.data;};}process(i){const c=i[0];if(this.on&&c&&c.length){this.port.postMessage([c[0].slice(0),(c[1]||c[0]).slice(0)]);}return true;}}registerProcessor("rec-3xoso",R);';
+      const url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      await actx.audioWorklet.addModule(url);
+      rec.node = new AudioWorkletNode(actx, 'rec-3xoso', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+      const sink = actx.createGain(); sink.gain.value = 0;
+      analyser.connect(rec.node).connect(sink).connect(actx.destination);
+      rec.node.port.onmessage = (e) => onRecChunk(e.data);
+    }
+  }
+  function stopRecording() {
+    if (!rec.on) return;
+    rec.on = false;
+    if (rec.node.port) rec.node.port.postMessage(false);
+    recBtn.classList.remove('rec-on');
+    recBtn.textContent = '⏺ Record';
+    const blob = encodeWav(rec.chunks, rec.frames, actx.sampleRate);
+    const url = URL.createObjectURL(blob);
+    const secs = (rec.frames / actx.sampleRate).toFixed(1);
+    recOut.innerHTML = `<a class="toggle dl" href="${url}" download="3xoso-${Date.now()}.wav">⬇ Download WAV (${secs} s)</a>`;
+  }
+  function encodeWav(chunks, frames, sr) {
+    const buf = new ArrayBuffer(44 + frames * 4);
+    const v = new DataView(buf);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + frames * 4, true); str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true); v.setUint32(24, sr, true);
+    v.setUint32(28, sr * 4, true); v.setUint16(32, 4, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, frames * 4, true);
+    let o = 44;
+    for (const [L, R] of chunks) {
+      for (let i = 0; i < L.length; i++) {
+        v.setInt16(o, clamp(L[i], -1, 1) * 0x7fff, true);
+        v.setInt16(o + 2, clamp(R[i], -1, 1) * 0x7fff, true);
+        o += 4;
+      }
+    }
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+  recBtn.addEventListener('click', () => (rec.on ? stopRecording() : startRecording().catch((e) => { soundsMsg.textContent = 'Recording failed: ' + e.message; })));
+  function drawRecTimer() {
+    if (rec.on) recBtn.textContent = `■ Stop recording (${((performance.now() - rec.start) / 1000).toFixed(1)} s)`;
+  }
+
+  // ================================================================ ear trainer
+  const quiz = { mode: 'wave', answer: null, choices: [], score: 0, total: 0, streak: 0, best: 0, revealed: false, q: null };
+  try { quiz.best = Number(localStorage.getItem('3xoso.quizBest') || 0); } catch (e) { /* storage blocked */ }
+  const QUIZ = {
+    wave: {
+      prompt: 'Which waveform is this?',
+      choices: [['sine', 'Sine'], ['triangle', 'Triangle'], ['square', 'Square'], ['saw', 'Saw']],
+      explain: {
+        sine: 'A sine is pure: one frequency only, soft and flute-like.',
+        triangle: 'A triangle has only odd harmonics and they fade fast: mellow, slightly hollow.',
+        square: 'A square has strong odd harmonics: hollow, woody, like a clarinet or 8-bit game.',
+        saw: 'A saw has every harmonic: bright, buzzy, brassy — the classic synth sound.',
+      },
+    },
+    interval: {
+      prompt: 'Two notes play one after the other, then together. How far apart are they?',
+      choices: [[0, 'Unison (0)'], [3, 'Minor 3rd (3)'], [4, 'Major 3rd (4)'], [5, 'Perfect 4th (5)'], [7, 'Perfect 5th (7)'], [12, 'Octave (12)']],
+      explain: {
+        0: 'Unison: the same note, ratio 1:1.', 3: 'Minor 3rd: 3 semitones, ratio ≈ 6:5 — sad, dark.', 4: 'Major 3rd: 4 semitones, ratio ≈ 5:4 — happy, bright.',
+        5: 'Perfect 4th: 5 semitones, ratio ≈ 4:3 — open, “Here comes the bride”.', 7: 'Perfect 5th: 7 semitones, ratio ≈ 3:2 — strong and stable, the “power chord”.', 12: 'Octave: 12 semitones, ratio 2:1 — the same note, higher.',
+      },
+    },
+    filter: {
+      prompt: 'A saw wave plays through a low-pass filter. Where is the cutoff?',
+      choices: [[300, 'Dark (300 Hz)'], [1200, 'Medium (1.2 kHz)'], [6000, 'Bright (6 kHz)']],
+      explain: {
+        300: 'Dark: only the first couple of harmonics get through — muffled, like through a wall.',
+        1200: 'Medium: the lower harmonics pass, the fizz is gone — warm.',
+        6000: 'Bright: most harmonics pass — buzzy and open.',
+      },
+    },
+  };
+  const quizEl = document.getElementById('quiz');
+  const quizPrompt = document.getElementById('quizPrompt');
+  const quizChoices = document.getElementById('quizChoices');
+  const quizFeedback = document.getElementById('quizFeedback');
+  const quizScore = document.getElementById('quizScore');
+  const quizCanvas = document.getElementById('quizCanvas');
+
+  function quizNew() {
+    const Q = QUIZ[quiz.mode];
+    const [val] = pick(Q.choices);
+    quiz.answer = val;
+    quiz.revealed = false;
+    quiz.q = { root: 48 + Math.floor(Math.random() * 12) };
+    quizPrompt.textContent = Q.prompt;
+    quizFeedback.innerHTML = '';
+    quizChoices.innerHTML = '';
+    Q.choices.forEach(([v, labelTxt]) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'toggle'; b.textContent = labelTxt;
+      b.addEventListener('click', () => quizAnswer(v, b));
+      quizChoices.appendChild(b);
+    });
+    quizPlay();
+  }
+
+  function quizPlay() {
+    if (quiz.answer == null || !ensureAudio()) return;
+    const t = actx.currentTime + 0.05;
+    const out = actx.createGain();
+    out.gain.value = 0.9;
+    out.connect(masterGain);
+    const tone = (shape, freq, t0, dur, level, filterHz) => {
+      const o = actx.createOscillator();
+      const b = harmonics(shape);
+      const real = new Float32Array(N_HARM + 1), imag = new Float32Array(N_HARM + 1);
+      for (let n = 1; n <= N_HARM; n++) imag[n] = b[n];
+      o.setPeriodicWave(actx.createPeriodicWave(real, imag, { disableNormalization: true }));
+      o.frequency.value = freq;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(level, t0 + 0.02);
+      g.gain.setValueAtTime(level, t0 + dur - 0.08);
+      g.gain.linearRampToValueAtTime(0, t0 + dur);
+      let node = o;
+      if (filterHz) { const f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = filterHz; node.connect(f); node = f; }
+      node.connect(g).connect(out);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    };
+    const f0 = midiFreq(quiz.q.root);
+    if (quiz.mode === 'wave') tone(quiz.answer, 220, t, 1.4, quiz.answer === 'square' ? 0.14 : quiz.answer === 'saw' ? 0.18 : 0.26);
+    else if (quiz.mode === 'interval') {
+      const f1 = f0 * Math.pow(2, quiz.answer / 12);
+      tone('triangle', f0, t, 0.7, 0.25); tone('triangle', f1, t + 0.75, 0.7, 0.25);
+      tone('triangle', f0, t + 1.55, 1.3, 0.18); tone('triangle', f1, t + 1.55, 1.3, 0.18);
+    } else tone('saw', 110, t, 1.6, 0.3, quiz.answer);
+    setTimeout(() => out.disconnect(), 3500);
+  }
+
+  function quizAnswer(v, btn) {
+    if (quiz.revealed || quiz.answer == null) return;
+    quiz.revealed = true;
+    quiz.total++;
+    const right = v === quiz.answer;
+    if (right) { quiz.score++; quiz.streak++; } else quiz.streak = 0;
+    if (quiz.streak > quiz.best) { quiz.best = quiz.streak; try { localStorage.setItem('3xoso.quizBest', String(quiz.best)); } catch (e) { /* ignore */ } }
+    [...quizChoices.children].forEach((b, k) => {
+      const val = QUIZ[quiz.mode].choices[k][0];
+      b.classList.toggle('right', val === quiz.answer);
+      if (b === btn && !right) b.classList.add('wrong');
+    });
+    quizFeedback.innerHTML = `${right ? '✅ <b>Correct!</b>' : '❌ <b>Not quite.</b>'} ${QUIZ[quiz.mode].explain[quiz.answer]} <button type="button" class="toggle" id="quizNext">Next →</button>`;
+    document.getElementById('quizNext').addEventListener('click', quizNew);
+    quizScore.textContent = `Score ${quiz.score}/${quiz.total} · streak ${quiz.streak} · best ${quiz.best}`;
+  }
+
+  document.querySelectorAll('[data-quiz]').forEach((b) => b.addEventListener('click', () => {
+    quiz.mode = b.dataset.quiz;
+    document.querySelectorAll('[data-quiz]').forEach((x) => x.classList.toggle('on', x === b));
+    quizNew();
+  }));
+  document.getElementById('quizReplay').addEventListener('click', () => (quiz.answer == null ? quizNew() : quizPlay()));
+
+  function drawQuiz() {
+    const c = cv(quizCanvas);
+    if (!c) return;
+    const { g, w, h } = c;
+    g.clearRect(0, 0, w, h);
+    if (quiz.answer == null) { label(g, 'Pick a game above, then listen', w / 2, h / 2 + 4, '#8a93a8', 'center'); return; }
+    if (!quiz.revealed) {
+      // a pulsing question mark while you listen
+      const a = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+      g.fillStyle = `rgba(94,230,196,${0.4 + 0.5 * a})`;
+      g.font = '600 34px system-ui, sans-serif';
+      g.textAlign = 'center';
+      g.fillText('?', w / 2, h / 2 + 12);
+      g.textAlign = 'left';
+      return;
+    }
+    g.strokeStyle = '#5ee6c4';
+    g.lineWidth = 2;
+    g.beginPath();
+    if (quiz.mode === 'wave') {
+      const b = harmonics(quiz.answer);
+      for (let x = 0; x <= w; x++) {
+        const th = (x / w) * Math.PI * 4;
+        let s = 0;
+        for (let n = 1; n <= 40; n++) if (b[n]) s += b[n] * Math.sin(n * th);
+        const y = h / 2 - s * (h / 2 - 8) * 0.8;
+        if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+    } else if (quiz.mode === 'interval') {
+      const r = Math.pow(2, quiz.answer / 12);
+      for (let x = 0; x <= w; x++) {
+        const th = (x / w) * Math.PI * 6;
+        const y = h / 2 - ((Math.sin(th) + Math.sin(th * r)) / 2) * (h / 2 - 8);
+        if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      label(g, `ratio ${r.toFixed(3)} : 1`, 6, 13, '#8a93a8');
+    } else {
+      for (let x = 0; x <= w; x += 2) {
+        const f = 20 * Math.pow(1000, x / w);
+        const y = clamp(h * 0.35 - (lpDb(f, quiz.answer, 0) / 36) * h * 0.6, 2, h - 2);
+        if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      for (let n = 1; n <= 60; n++) {
+        const f = 110 * n;
+        g.fillStyle = pitchColor(f, f > quiz.answer ? 0.25 : 0.9);
+        g.fillRect(specX(f, w) - 1, h - 10, 2, 8);
+      }
+    }
+    g.stroke();
+  }
+
+
+  Object.assign(INFO, {
+    chain: { title: 'Signal chain', body: '<p>The path your sound takes, left to right: the <b>oscillators</b> make the raw wave, the <b>filter</b> shapes its tone, the <b>envelope</b> shapes each note’s volume over time, then the effects: <b>Gator</b> (rhythmic volume), <b>Echo</b> (copies of the sound later in time) and <b>Reverb</b> (the room). Greyed-out stages are bypassed. Click a stage to jump to it.</p>' },
+    gator: { title: 'Gator (trance gate)', body: '<p>A gate turns the volume on and off in rhythm, synced to the tempo. Each of the 16 steps has its own level, and the <b>shape</b> decides how each gate opens and closes. It is how trance pads stutter, how “sidechain pumping” is faked, and how a long note becomes a rhythmic part.</p>' },
+    gateGrid: { title: 'Gate steps', body: '<p>Each column is one step. The coloured shape is the volume during that step. Click or drag up and down to set a step’s level; drag to the bottom to silence it. The white line shows where the gate is right now.</p>' },
+    gateShape: { title: 'Gate shape', body: '<p><b>Square</b>: hard on/off chops. <b>Pluck</b>: starts loud and fades — percussive. <b>Swell</b>: fades in — reverse/“sidechain pump” feel. <b>Tri</b> and <b>Smooth</b>: soft pulsing.</p>' },
+    gatePattern: { title: 'Gate patterns', body: '<p>Ready-made rhythms for the 16 steps. 🎲 makes a random one. You can edit any of them by drawing on the steps.</p>' },
+    gateRate: { title: 'Gate speed', body: '<p>How long each step lasts: 1/16 = four steps per beat, 1/8 = two, 1/4 = one, 1/32 = eight. It follows the sequencer tempo.</p>', live: () => `one step = ${(gateStepDur() * 1000).toFixed(0)} ms at ${state.bpm} BPM` },
+    gateDepth: { title: 'Gate depth', body: '<p>How far the volume drops between gates. 100% = silence, 50% = half volume, 0% = no effect.</p>' },
+    gateLen: { title: 'Gate length', body: '<p>How much of each step the gate stays open. Short = staccato chops, 100% = the gates touch.</p>' },
+    gateSmooth: { title: 'Gate smoothing', body: '<p>Rounds off the start and end of every gate to remove clicks. 0 = hard edges.</p>' },
+    echo: { title: 'Echo / Chorus / Delay', body: '<p>All three are the same machine: a <b>delay line</b> that plays the sound again a moment later, with <b>feedback</b> sending the echo back in to repeat. Long times (100 ms+) = separate echoes. 10–40 ms with a wobbling time = <b>chorus</b> (a thicker, shimmering copy). 1–6 ms with feedback = <b>flanger</b> (a jet whoosh).</p>' },
+    echoView: { title: 'Echo picture', body: '<p>Time runs left to right. The white bar is your note; each coloured bar is an echo, getting smaller by the feedback amount each time. Pink = left speaker, blue = right, yellow = centre. Bars flash as each echo is heard.</p>', live: () => `echo n arrives at n × ${fmtMs(state.dly.time)}\nlevel of echo n = mix × feedback^(n−1) = ${state.dly.mix.toFixed(2)} × ${state.dly.fb.toFixed(2)}^(n−1)\n→ 5th echo at ${(state.dly.mix * Math.pow(state.dly.fb, 4) * 100).toFixed(1)}%` },
+    echoModes: { title: 'Echo modes', body: '<p>Starting points that set every echo knob at once: <b>Chorus</b>, <b>Flanger</b>, <b>Slapback</b> (one quick repeat), <b>Echo</b> (tempo-synced repeats), <b>Ping-pong</b> (bouncing left/right) and <b>Dub</b> (dark, long, wobbly repeats).</p>' },
+    dlySync: { title: 'Sync to tempo', body: '<p>Locks the echo time to a note length at the current tempo, so echoes land in rhythm. 1/8d = dotted eighth (¾ of a beat) — the famous U2/“The Edge” echo.</p>' },
+    dlyMix: { title: 'Echo mix', body: '<p>How loud the echoes are compared with the original sound.</p>' },
+    dlyTime: { title: 'Echo time', body: '<p>The gap between the sound and its echo. Below ~40 ms our ears hear it as one thicker sound (chorus/flanger); above that, as separate repeats.</p>', live: () => `time = ${fmtMs(state.dly.time)} = ${(state.dly.time * state.bpm / 60).toFixed(2)} beats at ${state.bpm} BPM` },
+    dlyFb: { title: 'Feedback', body: '<p>How much of each echo is fed back in to make the next one. 0 = one echo; 50% = each echo half as loud as the last; near 95% = echoes that almost never die.</p>' },
+    dlyTone: { title: 'Echo tone', body: '<p>A low-pass filter inside the feedback loop: each repeat gets darker, like old tape echo units.</p>' },
+    dlySpread: { title: 'Stereo spread', body: '<p>Pans alternate echoes left and right (ping-pong). 0 = all echoes in the middle.</p>' },
+    dlyRate: { title: 'Wobble rate', body: '<p>Speed of the built-in LFO that moves the delay time. Moving the time slightly bends the pitch of the echo up and down — that is what makes chorus shimmer.</p>' },
+    dlyDepth: { title: 'Wobble depth', body: '<p>How far the LFO moves the delay time. Small = gentle chorus, larger = seasick vibrato.</p>' },
+    reverb: { title: 'Reverb', body: '<p>Reverb is thousands of echoes blurred together as sound bounces around a room. Here it is made by <b>convolution</b>: your sound is multiplied with a recording-like “fingerprint” of a room (a burst of noise that dies away).</p>' },
+    revView: { title: 'Reverb picture', body: '<p>Left: the room’s fingerprint — how the reverb dies away after the pre-delay gap. The dashed line marks the decay time (−60 dB). Right: rings spreading from your last note, fading as the reverb dies. The box size shows the room size.</p>' },
+    revModes: { title: 'Reverb rooms', body: '<p>Room (small, short), Plate (bright, dense), Hall (concert hall), Cathedral (long and dark), Infinite (a huge wash for ambient music).</p>' },
+    revMix: { title: 'Reverb mix', body: '<p>Balance between the dry sound and the room. More mix = further away.</p>' },
+    revSize: { title: 'Reverb decay', body: '<p>How long the reverb takes to fade to silence (−60 dB, called RT60). Small rooms ≈ 0.5 s, halls ≈ 2–3 s, cathedrals 5 s or more.</p>' },
+    revPre: { title: 'Pre-delay', body: '<p>A gap before the reverb starts. It keeps the original sound clear and makes the room seem bigger.</p>' },
+    revDamp: { title: 'Damping', body: '<p>Turns down the high frequencies of the reverb. Real rooms with soft surfaces (curtains, people) absorb highs, so a low setting sounds warmer and darker.</p>' },
+    mods: { title: 'Modulators', body: '<p>Two free-running LFOs (slow oscillators) that can wobble <b>any</b> knob — any effect setting, the filter, volumes, pans or an oscillator’s Fixed Hz. Unlike automation lanes they run all the time, even with the sequencer stopped. The knob being wobbled glows green.</p>' },
+    modTarget: { title: 'Modulator target', body: '<p>Which knob this modulator moves. Try Echo time (pitch-bending repeats), Reverb mix (breathing space), Filter cutoff (slow sweeps) or Osc pan (auto-pan).</p>' },
+    modShape: { title: 'Modulator shape', body: '<p>Sine and triangle swing smoothly, saw ramps up and jumps back, square flips between two values, ⁂ picks a new random value each cycle.</p>' },
+    modRate: { title: 'Modulator rate', body: '<p>Cycles per second, from 0.05 Hz (once every 20 seconds) to 10 Hz.</p>' },
+    modDepth: { title: 'Modulator depth', body: '<p>How far the knob moves either side of where you left it.</p>' },
+    inspire: { title: 'Surprise me & Mutate', body: '<p><b>Surprise me</b> builds a brand-new random sound (bass, pad, lead, pluck, keys or FX) with musical settings, a pattern and effects. <b>Mutate</b> nudges the current sound a little — tuning, levels, filter, effects, the pattern — so it slowly evolves. Great for breaking writer’s block.</p>' },
+    mysounds: { title: 'My sounds', body: '<p>Save the whole setup (oscillators, filter, envelope, effects, pattern, automation and modulators) in this browser. <b>Share link</b> copies a web address containing the sound — anyone who opens it gets exactly the same setup. <b>Record</b> captures what you hear to a WAV file you can drop into any DAW.</p>' },
+    quiz: { title: 'Ear trainer', body: '<p>Short listening games: identify a waveform, an interval between two notes, or how bright a filter is. Answers show a picture of what you heard, so you connect the sound to the shape. Your best streak is remembered.</p>' },
+  });
+
+  // ================================================================ more presets (with effects)
+  const G = (pattern, shape = 'square', rate = 16, more = {}) => ({ pattern, shape, rate, ...more });
+  PRESETS.push(
+    { cat: 'Pad', name: 'Trance Gate Pad', desc: 'Detuned saws chopped by the Gator in a classic trance rhythm, with ping-pong echo and a hall. Watch the gate steps light up.',
+      osc: [{ shape: 'saw', fine: -12, pan: -0.5, vol: 0.55 }, { shape: 'saw', fine: 12, pan: 0.5, vol: 0.55 }, { shape: 'saw', coarse: -12, vol: 0.4 }], cutoff: 3500, res: 2, env: [0.3, 0.5, 0.9, 1],
+      gator: G(GATE_PATTERNS.Trance, 'square', 16, { len: 0.7, smooth: 0.06 }), dly: { ...DLY_MODES['Ping-pong'], mix: 0.3 }, rev: { ...REV_MODES.Hall },
+      demo: { bpm: 138, root: 48, bars: 2, gate: 1, seq: '0 . . . . . . . 5 . . . . . . .' } },
+    { cat: 'Pad', name: 'Ambient Shimmer', desc: 'Soft sines and a triangle with a long cathedral reverb and an echo whose tone slowly wobbles (Mod 1).',
+      osc: [{ shape: 'sine', vol: 0.6 }, { shape: 'triangle', coarse: 12, fine: 4, vol: 0.3 }, { shape: 'sine', coarse: 19, vol: 0.18 }], env: [1.5, 2, 0.8, 4],
+      dly: { ...DLY_MODES.Echo, sync: '1/4', fb: 0.55, mix: 0.3, tone: 3000 }, rev: { ...REV_MODES.Cathedral, mix: 0.55 },
+      mods: [{ on: true, target: 'dlyTone', shape: 'sine', rate: 0.1, depth: 0.5 }],
+      demo: { bpm: 70, root: 60, bars: 2, gate: 1, seq: '0 . . . . . . . 7 . . . . . . .' } },
+    { cat: 'Pad', name: 'Chorus Strings', desc: 'Saws thickened by a stereo chorus — a short delay whose time wobbles, so copies drift slightly out of tune.',
+      osc: [{ shape: 'saw', fine: -5, vol: 0.5 }, { shape: 'saw', fine: 5, vol: 0.5 }, { shape: 'saw', coarse: 12, vol: 0.2 }], cutoff: 3000, res: 1, env: [0.5, 0.6, 0.85, 1.4],
+      dly: { ...DLY_MODES.Chorus, mix: 0.6 }, rev: { ...REV_MODES.Hall, mix: 0.25 },
+      demo: { bpm: 80, root: 48, gate: 1, seq: '0 . . . 3 . . . 7 . . . 5 . . .' } },
+    { cat: 'Pad', name: 'Pumping Pad', desc: 'The Gator in Swell shape at quarter notes ducks the pad on every beat — the “sidechain pump” of dance music.',
+      osc: [{ shape: 'saw', fine: -9, vol: 0.55 }, { shape: 'saw', fine: 9, vol: 0.55 }, { shape: 'square', coarse: -12, vol: 0.3 }], cutoff: 2600, res: 2, env: [0.2, 0.5, 0.9, 1],
+      gator: G('XXXXXXXXXXXXXXXX', 'up', 4, { len: 1, smooth: 0 }), rev: { ...REV_MODES.Plate, mix: 0.25 },
+      demo: { bpm: 124, root: 48, bars: 2, gate: 1, seq: '0 . . . . . . . . . . . . . . .' } },
+    { cat: 'Pad', name: 'Flanger Sweep', desc: 'A jet-plane whoosh: a very short delay with high feedback whose time slowly sweeps.',
+      osc: [{ shape: 'saw', vol: 0.6 }, { shape: 'saw', coarse: -12, fine: 6, vol: 0.45 }, off], cutoff: 6000, env: [0.4, 0.5, 0.9, 1.2],
+      dly: { ...DLY_MODES.Flanger }, rev: { ...REV_MODES.Room },
+      demo: { bpm: 90, root: 45, bars: 2, gate: 1, seq: '0 . . . . . . . . . . . . . . .' } },
+    { cat: 'Keys & plucks', name: 'Dub Chord', desc: 'Three oscillators tuned 0, +3, +7 make a minor chord. A dark dub echo keeps repeating it.',
+      osc: [{ shape: 'square', vol: 0.45 }, { shape: 'saw', coarse: 3, vol: 0.4 }, { shape: 'saw', coarse: 7, vol: 0.4 }], cutoff: 1400, res: 4, fenv: 1.2, env: [0.003, 0.25, 0, 0.2],
+      dly: { ...DLY_MODES.Dub }, rev: { ...REV_MODES.Plate, mix: 0.2 },
+      demo: { bpm: 74, root: 48, gate: 0.4, seq: '. . . . 0 . . . . . . . 0 . . .' } },
+    { cat: 'Keys & plucks', name: 'Detroit Stab', desc: 'A minor-7th chord stab (0, +3, +10) with a snappy filter envelope and 1/16 echo.',
+      osc: [{ shape: 'saw', vol: 0.45 }, { shape: 'saw', coarse: 3, vol: 0.4 }, { shape: 'saw', coarse: 10, vol: 0.4 }], cutoff: 900, res: 7, fenv: 2.8, env: [0.002, 0.2, 0, 0.15],
+      dly: { ...DLY_MODES.Echo, sync: '1/16', fb: 0.35, mix: 0.3 }, rev: { ...REV_MODES.Room },
+      demo: { bpm: 128, root: 48, gate: 0.3, seq: '0 . . 0 . . 0 . . . 0 . . 0 . .' } },
+    { cat: 'Keys & plucks', name: 'Lo-fi Keys', desc: 'Mellow triangle keys with a slow, wonky chorus (like worn tape) and a small room.',
+      osc: [{ shape: 'triangle', vol: 0.7 }, { shape: 'sine', coarse: 12, vol: 0.2 }, off], cutoff: 2400, env: [0.004, 1, 0.3, 0.6],
+      dly: { time: 0.022, fb: 0.15, depth: 0.007, rate: 0.35, spread: 0.4, mix: 0.55, tone: 5000, sync: 'off' }, rev: { ...REV_MODES.Room, mix: 0.3 },
+      demo: { bpm: 82, root: 60, gate: 0.8, seq: '0 . . 4 . . 7 . 11 . . 7 . 4 . .' } },
+    { cat: 'Keys & plucks', name: 'Ping-Pong Pluck', desc: 'A short pluck whose echoes bounce left and right. Use headphones and watch the pink (left) and blue (right) taps.',
+      osc: [{ shape: 'saw', vol: 0.7 }, { shape: 'square', coarse: 12, vol: 0.2 }, off], cutoff: 600, res: 4, fenv: 4, env: [0.002, 0.2, 0, 0.25],
+      dly: { ...DLY_MODES['Ping-pong'], mix: 0.45 }, rev: { ...REV_MODES.Room },
+      demo: { bpm: 110, root: 60, gate: 0.3, seq: '0 . . 7 . . 12 . . . 10 . 7 . . .' } },
+    { cat: 'Keys & plucks', name: 'Dream Bell', desc: 'Inharmonic bell tones into a quarter-note echo and a huge reverb.',
+      osc: [{ shape: 'sine', vol: 0.7 }, { shape: 'sine', coarse: 19, fine: 2, vol: 0.3 }, { shape: 'sine', coarse: 34, fine: -14, vol: 0.12 }], env: [0.002, 2, 0, 2],
+      dly: { ...DLY_MODES.Echo, sync: '1/4d', fb: 0.4, mix: 0.3 }, rev: { ...REV_MODES.Cathedral },
+      demo: { bpm: 80, root: 72, gate: 0.5, seq: '0 . . . . . 7 . . . . . 4 . . .' } },
+    { cat: 'Lead', name: 'Slapback Lead', desc: 'A square lead with a single quick echo (about 90 ms) — the rockabilly “slapback”.',
+      osc: [{ shape: 'square', vol: 0.65 }, { shape: 'square', coarse: 12, fine: 6, vol: 0.2 }, off], cutoff: 3500, res: 2, env: [0.005, 0.2, 0.7, 0.15],
+      dly: { ...DLY_MODES.Slapback },
+      demo: { bpm: 120, root: 60, gate: 0.6, seq: '0 . 3 . 5 . 3 . 7 . 5 . 3 . 0 .' } },
+    { cat: 'Lead', name: 'Hoover', desc: 'Massively detuned saws plus a chorus, with a pitch dip at the start of each bar — the rave “hoover”.',
+      osc: [{ shape: 'saw', fine: -30, pan: -0.6, vol: 0.55 }, { shape: 'saw', fine: 30, pan: 0.6, vol: 0.55 }, { shape: 'saw', coarse: -12, vol: 0.45 }], cutoff: 5000, res: 3, env: [0.05, 0.4, 0.9, 0.4],
+      dly: { ...DLY_MODES.Chorus, mix: 0.5 }, rev: { ...REV_MODES.Hall, mix: 0.2 },
+      demo: { bpm: 135, root: 48, gate: 0.95, seq: '0 . . . . . . 3 . . . . 7 . 5 .', lanes: [{ target: 'pitch', shape: 'rise', cycles: 1, lo: 0.68, hi: 0.75 }] } },
+    { cat: 'Lead', name: 'Synth Brass', desc: 'Saws with a slower attack and a filter envelope that opens as the note starts — 80s brass.',
+      osc: [{ shape: 'saw', vol: 0.6 }, { shape: 'saw', fine: 8, vol: 0.55 }, { shape: 'square', coarse: -12, vol: 0.2 }], cutoff: 700, res: 2, fenv: 2.6, env: [0.07, 0.4, 0.75, 0.3],
+      rev: { ...REV_MODES.Plate, mix: 0.25 },
+      demo: { bpm: 112, root: 55, gate: 0.85, seq: '0 . . . 0 . 3 . . . 5 . 3 . . .' } },
+    { cat: 'Lead', name: '80s Poly Arp', desc: 'Square + saw arpeggio through chorus and a dotted-eighth echo.',
+      osc: [{ shape: 'square', vol: 0.5 }, { shape: 'saw', coarse: 12, vol: 0.25 }, off], cutoff: 2600, res: 3, fenv: 1.5, env: [0.003, 0.2, 0.4, 0.2],
+      dly: { ...DLY_MODES['Ping-pong'], sync: '1/8d', fb: 0.4, mix: 0.35 }, rev: { ...REV_MODES.Hall, mix: 0.2 },
+      demo: { bpm: 118, root: 57, gate: 0.5, seq: '0 3 7 12 0 3 7 12 0 5 8 12 0 5 8 12' } },
+    { cat: 'Lead', name: 'Chip Echo', desc: 'A chiptune square with a 1/16 echo that doubles every note.',
+      osc: [{ shape: 'square', vol: 0.65 }, off, off], env: [0.002, 0.1, 0.5, 0.05],
+      dly: { ...DLY_MODES.Echo, sync: '1/16', fb: 0.3, mix: 0.35, tone: 9000 },
+      demo: { bpm: 140, root: 60, gate: 0.4, seq: '0 . 4 . 7 . 12 . 7 . 4 . 0 . 7 .' } },
+    { cat: 'Bass', name: 'Gated Bass', desc: 'A long bass note chopped into 16ths by the Gator in Pluck shape — instant rolling bassline.',
+      osc: [{ shape: 'saw', vol: 0.7 }, { shape: 'sine', coarse: -12, vol: 0.6 }, off], cutoff: 700, res: 6, env: [0.005, 0.3, 1, 0.2],
+      gator: G('XXXXXXXXXXXXXXXX', 'down', 16, { len: 0.9, smooth: 0.02 }),
+      demo: { bpm: 126, root: 33, bars: 2, gate: 1, seq: '0 . . . . . . . 3 . . . 5 . . .', lanes: [{ target: 'cutoff', shape: 'tri', cycles: 1, lo: 0.4, hi: 0.62 }] } },
+    { cat: 'Bass', name: 'Wobble Gate Bass', desc: 'Triangle-shaped gates at 1/8 plus a resonant filter: a softer, rhythmic wobble.',
+      osc: [{ shape: 'saw', vol: 0.65 }, { shape: 'square', fine: 10, vol: 0.5 }, { shape: 'sine', coarse: -12, vol: 0.5 }], cutoff: 500, res: 10, env: [0.01, 0.3, 1, 0.2],
+      gator: G('XXXXXXXXXXXXXXXX', 'tri', 8, { len: 1, smooth: 0 }), rev: { ...REV_MODES.Room, mix: 0.15 },
+      demo: { bpm: 140, root: 33, bars: 2, gate: 1, seq: '0 . . . . . . . 3 . . . . . . .', lanes: [{ target: 'cutoff', shape: 'sine', cycles: 2, lo: 0.25, hi: 0.55 }] } },
+    { cat: 'FX', name: 'Heartbeat', desc: 'A deep sine chopped into a lub-dub pattern by the Gator, in a small room.',
+      osc: [{ shape: 'sine', vol: 0.9 }, { shape: 'triangle', coarse: 12, vol: 0.15 }, off], env: [0.01, 0.5, 1, 0.3],
+      gator: G(GATE_PATTERNS.Heartbeat, 'down', 16, { len: 0.9, smooth: 0.05 }), rev: { ...REV_MODES.Room, mix: 0.2 },
+      demo: { bpm: 66, root: 28, gate: 1, seq: '. . . . . . . . . . . . . . . .', drone: 28 } },
+    { cat: 'FX', name: 'Space Drone', desc: 'Sines, noise and an infinite reverb with a long, dark echo. Mod 1 slowly moves the echo time for pitch-bending repeats.',
+      osc: [{ shape: 'sine', vol: 0.5 }, { shape: 'triangle', coarse: 7, fine: 6, vol: 0.3 }, { shape: 'noise', vol: 0.06 }], cutoff: 2500, res: 4, env: [2, 1, 1, 4],
+      dly: { ...DLY_MODES.Dub, fb: 0.7, tone: 1500, mix: 0.45 }, rev: { ...REV_MODES.Infinite },
+      mods: [{ on: true, target: 'dlyTime', shape: 'sine', rate: 0.07, depth: 0.15 }, { on: true, target: 'cutoff', shape: 'tri', rate: 0.05, depth: 0.4 }],
+      demo: { bpm: 60, root: 36, bars: 4, gate: 1, seq: '. . . . . . . . . . . . . . . .', drone: 36 } },
+    { cat: 'FX', name: 'Rain', desc: 'Bright noise chopped into random 1/32 droplets by the Gator, with a plate reverb.',
+      osc: [{ shape: 'noise', vol: 0.6 }, off, off], cutoff: 7000, res: 2, env: [0.5, 0.5, 1, 1.5],
+      gator: G('XxX.x.XXx.Xx.XxX', 'down', 32, { len: 0.35, smooth: 0.02 }), rev: { ...REV_MODES.Plate, mix: 0.4 },
+      demo: { bpm: 100, root: 48, gate: 1, seq: '. . . . . . . . . . . . . . . .', drone: 48 } },
+    { cat: 'FX', name: 'Siren', desc: 'A square whose pitch rises and falls (automation lane, triangle shape) with an echo trail.',
+      osc: [{ shape: 'square', vol: 0.5 }, { shape: 'square', coarse: 12, vol: 0.15 }, off], cutoff: 4000, env: [0.05, 0.3, 1, 0.5],
+      dly: { ...DLY_MODES.Echo, fb: 0.35, mix: 0.25 }, rev: { ...REV_MODES.Hall, mix: 0.25 },
+      demo: { bpm: 100, root: 60, bars: 1, gate: 1, seq: '. . . . . . . . . . . . . . . .', drone: 60, lanes: [{ target: 'pitch', shape: 'tri', cycles: 2, lo: 0.75, hi: 0.92 }] } },
+    { cat: 'FX', name: 'Underwater', desc: 'A muffled chord with chorus while Mod 1 slowly opens and closes the filter — like hearing music from under the surface.',
+      osc: [{ shape: 'saw', vol: 0.5 }, { shape: 'saw', coarse: 7, vol: 0.4 }, { shape: 'square', coarse: -12, vol: 0.3 }], cutoff: 450, res: 8, env: [0.3, 0.5, 0.9, 1],
+      dly: { ...DLY_MODES.Chorus, depth: 0.006, rate: 0.4, mix: 0.6 }, rev: { ...REV_MODES.Hall, mix: 0.35 },
+      mods: [{ on: true, target: 'cutoff', shape: 'sine', rate: 0.25, depth: 0.3 }],
+      demo: { bpm: 80, root: 48, bars: 2, gate: 1, seq: '0 . . . . . . . 5 . . . . . . .' } },
+  );
 
   // ================================================================ global controls
   const winInp = document.getElementById('window');
@@ -2008,6 +3240,7 @@
     for (let i = 0; i < 3; i++) syncOscUI(i);
     state.lanes.forEach((l, k) => syncLaneUI(k));
     syncTransportUI();
+    if (fxUI.gateOn) syncFxUI();
     if (masterGain) masterGain.gain.setTargetAtTime(state.master, actx.currentTime, 0.02);
     markDirty();
   }
@@ -2082,6 +3315,7 @@
   window.addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.target instanceof HTMLSelectElement) return;
+    if (e.target instanceof HTMLInputElement && e.target.type === 'text') return;
     if (e.code === 'Space') {
       e.preventDefault();
       if (e.repeat) return;
@@ -2248,6 +3482,14 @@
     drawRing(pos);
     drawLane(0, pos);
     drawLane(1, pos);
+    drawLane(2, pos);
+    drawGator();
+    drawEcho();
+    drawReverb();
+    drawMods();
+    drawQuiz();
+    drawChain(env);
+    if (frameCount % 10 === 0) drawRecTimer();
     if (dirty && now - lastRefresh > 90) { dirty = false; lastRefresh = now; refreshReadouts(); }
     frameCount++;
     requestAnimationFrame(frame);
@@ -2257,6 +3499,7 @@
   buildPresets();
   buildOscPanels();
   buildLanes();
+  buildFxUI();
   bindParamInputs(document);
   for (let i = 0; i < 3; i++) rebuildTable(i);
   state.lanes.forEach(genLane);
@@ -2266,5 +3509,7 @@
   setWindowMs(state.windowMs);
   setMode(true);
   syncAll();
+  renderSounds();
+  loadFromHash();
   requestAnimationFrame(frame);
 })();
