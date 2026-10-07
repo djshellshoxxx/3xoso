@@ -17,7 +17,14 @@ Every knob you turn changes both the sound and a picture of the sound, so you ca
 - **Mix analysis** that names the interval between oscillators, the beat rate (|f₁ − f₂|), phase cancellation and AM behaviour.
 - **Learn mode**: hover over any control to see what it does and the maths behind it, using the current values. **Play mode** hides the explanations.
 - **8 guided lessons**: pure tone, harmonics, octaves and fifths, beating, phase cancellation, detune width, AM, and noise.
-- ADSR envelope, on-screen keyboard, computer-keyboard playing (`Z`–`M`, `Q`–`I`), Hold, and Web MIDI input in Chrome or Edge.
+- **25 presets**: basses (sub, Reese, acid, wobble, drop), pads, leads, keys and plucks, and FX (riser, laser, wind, gate). Each one comes with a demo pattern.
+- **Low-pass filter** with resonance and an envelope amount, plus a global **pitch bend**.
+- **Fixed Hz mode** per oscillator: set the speed directly, from 0.1 Hz (an LFO) to 8 kHz. A spinning **speed wheel** and a frequency-zone map show how fast each oscillator is going.
+- **Pitch-coloured panels**: an oscillator's panel turns darker and bluer as its pitch drops, and lighter and redder as it rises.
+- **16-step sequencer** with tempo, note length and root note.
+- **Loop** of 1, 2 or 4 bars (or one-shot), drawn as a **spinning ring** with a loop counter and a flash on each repeat.
+- **Two automation lanes**: draw a curve or pick a shape. They can drive the filter, pitch, volumes, pans or Fixed Hz, and the knob being moved glows and moves on its own. There are one-click **filter sweep, bass drop, riser and wobble** macros.
+- ADSR envelope, on-screen keyboard, computer-keyboard playing (`Z`–`M`, `Q`–`I`), Space to start and stop playback, Hold, and Web MIDI input in Chrome or Edge.
 
 ## Running it
 
