@@ -1,68 +1,64 @@
 # 3xOSO
 
-3xOSO is a visual three-oscillator synthesizer and synthesis-learning tool inspired by the workflow of FL Studio's 3x Osc.
+3xOSO is a browser-based visual synthesis learning instrument inspired by the oscillator section of FL Studio's 3x Osc. It is built around one rule: every audible change should also produce an understandable visual and numerical change.
 
-The project is built around one rule: **every audible change should also produce an understandable visual and numerical change**.
+Each oscillator has an animated waveform, numeric parameter readouts, pitch-aware color, level-aware size/thickness, and live derived-frequency math. A separate combined scope shows how the three signals interact.
 
-Each oscillator has a live waveform, numeric parameter readouts, pitch-aware color, level-aware size/thickness, and an optional explanation of the math behind what is happening. A separate master view shows how the three oscillator signals combine, interfere, beat, widen, cancel, and change timbre.
+## Current implementation
 
-## Project goals
+- Three polyphonic oscillators running in an AudioWorklet.
+- Sine, triangle, square, saw, rounded saw and noise generation.
+- Custom selector retained for conceptual parity; FL Studio's actual Custom source comes from the separate Channel Sampler and is outside this synth-only scope.
+- Invert, stereo phase offsets, stereo detune, coarse tune (-24..+24 semitones), fine tune (-100..+100 cents), pan and Osc 2/3 mix controls.
+- Sequential 3x Osc-style mixing: Osc 2 crossfades against Osc 1, then Osc 3 crossfades against the Osc 1+2 result.
+- AM OSC 3, phase randomization and HQ 2x sampling mode.
+- Animated individual scopes and a final analyser-driven output scope.
+- Logarithmic blue-to-red pitch color and contribution-driven waveform height/thickness.
+- Learning Mode with live frequency formulas, mix equations and final oscillator contribution percentages.
+- Computer-keyboard polyphony and pointer-playable piano.
+- Guided learning experiments: equal thirds, phase cancellation, octave stack and wide detune.
+- Responsive Circuit Drift Labs visual design.
+- Deterministic DSP tests, Playwright browser smoke test, GitHub Actions CI and GitHub Pages deployment workflow.
 
-- Preserve the compact three-oscillator workflow that makes 3x Osc useful.
-- Rebuild the interaction model around visual learning instead of knob memorization.
-- Make pitch, phase, detune, amplitude, panning, and waveform shape immediately visible.
-- Show useful real-time formulas and numeric values without requiring DSP knowledge.
-- Remain musical and fun enough to use as a real sound-design playground.
-- Run efficiently in a browser first, with architecture that can later support a desktop/plugin version.
+## Run
 
-## Core experience
+```bash
+npm install
+npm run dev
+```
 
-3xOSO contains three independently visualized oscillators and one combined-output visualization.
+The deterministic DSP tests only require Node 22:
 
-The oscillator views show waveform shape, motion, pitch, level, phase, pan, tuning, harmonic character, and contribution to the mix. The master view shows the resulting waveform and can optionally overlay the individual sources.
+```bash
+npm test
+```
 
-Low-frequency content trends toward blue. High-frequency content trends toward red. Output level affects waveform height and stroke thickness. Visual behavior is informative rather than decorative.
+Production verification:
 
-Three interface levels are planned:
+```bash
+npm run build
+npm run e2e
+```
 
-- **Play**: immediate sound design with minimal explanations.
-- **Learn**: formulas, parameter explanations, beat-frequency detection, phase/interference cues, and guided examples.
-- **Analyze**: deeper metering, spectrum/harmonic inspection, stereo correlation, and comparison tools.
+## Keyboard
 
-## Reference behavior
+`A W S E D F T G Y H U J K` plays C4 through C5 chromatically.
 
-The project is inspired by 3x Osc rather than being a graphical clone. The parity target covers its oscillator concepts: sine, triangle, square, saw, rounded saw, noise and custom source options; invert; stereo phase offset; stereo detune; coarse and fine tuning; pan; oscillator mix behavior; Oscillator 3 amplitude modulation; high-quality oscillator mode; and phase randomization.
+## Architecture
 
-3xOSO may add educational controls such as solo, mute, freeze, compare, scope triggering, guided challenges, and visual overlays where they improve learning.
+The UI is TypeScript + React + Vite. Audio runs in `public/three-osc-processor.js` as an AudioWorklet. Canvas 2D scopes stay on the UI thread. Pure synthesis math lives in `src/dsp/synth.ts` and is tested independently.
 
-## Documentation
+The app is static and deploys under `/3xoso/` on GitHub Pages. It has no backend, account system, telemetry or remote audio service.
 
-- [Product specification](docs/PRODUCT_SPEC.md)
-- [Engineering specification](docs/ENGINEERING_SPEC.md)
-- [3x Osc parity specification](docs/CONTROL_PARITY.md)
-- [UI and interaction wireframe](docs/UI_WIREFRAME.md)
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
-- [Feature roadmap](docs/FEATURE_ROADMAP.md)
-- [Testing and verification plan](docs/TEST_PLAN.md)
+## Engineering docs
 
-## Recommended implementation
-
-Initial target:
-
-- TypeScript
-- React
-- Vite
-- Web Audio API
-- AudioWorklet for synthesis
-- Canvas 2D for scopes and educational overlays
-- Web MIDI where available
-
-The audio thread and visualization thread remain separated. The UI consumes analysis data from bounded buffers and never blocks audio rendering.
+- [Product specification](docs/specs/001-product-spec.md)
+- [Audio/DSP specification](docs/specs/002-audio-dsp-spec.md)
+- [Visualization and learning specification](docs/specs/003-visual-learning-spec.md)
+- [Controls and interaction specification](docs/specs/004-controls-and-interaction.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Testing](docs/TESTING.md)
 
 ## Scope
 
-The first major release focuses on the synthesizer/oscillator experience. It intentionally does not try to recreate FL Studio's surrounding channel rack, sampler, mixer, effects or full DAW environment.
-
-## Status
-
-Specification and architecture phase.
+The first release focuses on the synthesizer/oscillator experience only. It intentionally does not reproduce FL Studio's Channel Rack, sampler, mixer, effects, wrapper or DAW environment.
