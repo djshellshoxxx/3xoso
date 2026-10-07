@@ -1,68 +1,31 @@
 # 3xOSO
 
-3xOSO is a visual three-oscillator synthesizer and synthesis-learning tool inspired by the workflow of FL Studio's 3x Osc.
+A visual three-oscillator synthesizer and learning tool, inspired by the workflow of FL Studio's 3x Osc.
 
-The project is built around one rule: **every audible change should also produce an understandable visual and numerical change**.
+**Live:** https://djshellshoxxx.github.io/3xoso/
 
-Each oscillator has a live waveform, numeric parameter readouts, pitch-aware color, level-aware size/thickness, and an optional explanation of the math behind what is happening. A separate master view shows how the three oscillator signals combine, interfere, beat, widen, cancel, and change timbre.
+Every knob you turn changes both the sound and a picture of the sound, so you can learn what synthesis is doing by watching and listening.
 
-## Project goals
+## What it does
 
-- Preserve the compact three-oscillator workflow that makes 3x Osc useful.
-- Rebuild the interaction model around visual learning instead of knob memorization.
-- Make pitch, phase, detune, amplitude, panning, and waveform shape immediately visible.
-- Show useful real-time formulas and numeric values without requiring DSP knowledge.
-- Remain musical and fun enough to use as a real sound-design playground.
-- Run efficiently in a browser first, with architecture that can later support a desktop/plugin version.
+- **Three oscillators**, each with sine, triangle, square, saw, rounded saw and noise shapes, plus coarse tune, fine tune, volume, pan, phase offset, invert, mute and solo.
+- **Osc 3 as AM**: oscillator 3 can wobble the volume of oscillators 1 and 2 (tremolo or metallic sidebands).
+- **A live scope per oscillator.** More cycles on screen means a higher pitch. Taller and thicker means louder. Colour runs from blue (low) to red (high).
+- **Harmonic fingerprint** bars that show the sine-wave recipe behind each shape.
+- **Mix scope** that draws the three waves and their sum, so you can see interference, beating and cancellation.
+- **Real output scope and spectrum**, measured from the audio itself.
+- **Mix analysis** that names the interval between oscillators, the beat rate (|f₁ − f₂|), phase cancellation and AM behaviour.
+- **Learn mode**: hover over any control to see what it does and the maths behind it, using the current values. **Play mode** hides the explanations.
+- **8 guided lessons**: pure tone, harmonics, octaves and fifths, beating, phase cancellation, detune width, AM, and noise.
+- ADSR envelope, on-screen keyboard, computer-keyboard playing (`Z`–`M`, `Q`–`I`), Hold, and Web MIDI input in Chrome or Edge.
 
-## Core experience
+## Running it
 
-3xOSO contains three independently visualized oscillators and one combined-output visualization.
+It is a static site with no build step: `index.html`, `style.css` and `app.js`.
 
-The oscillator views show waveform shape, motion, pitch, level, phase, pan, tuning, harmonic character, and contribution to the mix. The master view shows the resulting waveform and can optionally overlay the individual sources.
+- **Locally:** open `index.html` in a browser.
+- **GitHub Pages:** go to *Settings → Pages → Build and deployment*. Set *Source* to **Deploy from a branch**, then pick branch **main** and folder **/ (root)**.
 
-Low-frequency content trends toward blue. High-frequency content trends toward red. Output level affects waveform height and stroke thickness. Visual behavior is informative rather than decorative.
+## How the sound is made
 
-Three interface levels are planned:
-
-- **Play**: immediate sound design with minimal explanations.
-- **Learn**: formulas, parameter explanations, beat-frequency detection, phase/interference cues, and guided examples.
-- **Analyze**: deeper metering, spectrum/harmonic inspection, stereo correlation, and comparison tools.
-
-## Reference behavior
-
-The project is inspired by 3x Osc rather than being a graphical clone. The parity target covers its oscillator concepts: sine, triangle, square, saw, rounded saw, noise and custom source options; invert; stereo phase offset; stereo detune; coarse and fine tuning; pan; oscillator mix behavior; Oscillator 3 amplitude modulation; high-quality oscillator mode; and phase randomization.
-
-3xOSO may add educational controls such as solo, mute, freeze, compare, scope triggering, guided challenges, and visual overlays where they improve learning.
-
-## Documentation
-
-- [Product specification](docs/PRODUCT_SPEC.md)
-- [Engineering specification](docs/ENGINEERING_SPEC.md)
-- [3x Osc parity specification](docs/CONTROL_PARITY.md)
-- [UI and interaction wireframe](docs/UI_WIREFRAME.md)
-- [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
-- [Feature roadmap](docs/FEATURE_ROADMAP.md)
-- [Testing and verification plan](docs/TEST_PLAN.md)
-
-## Recommended implementation
-
-Initial target:
-
-- TypeScript
-- React
-- Vite
-- Web Audio API
-- AudioWorklet for synthesis
-- Canvas 2D for scopes and educational overlays
-- Web MIDI where available
-
-The audio thread and visualization thread remain separated. The UI consumes analysis data from bounded buffers and never blocks audio rendering.
-
-## Scope
-
-The first major release focuses on the synthesizer/oscillator experience. It intentionally does not try to recreate FL Studio's surrounding channel rack, sampler, mixer, effects or full DAW environment.
-
-## Status
-
-Specification and architecture phase.
+Each waveform is built as a sum of 64 harmonics (`wave(θ) = Σ bₙ·sin(n·θ)`) and loaded into a Web Audio `PeriodicWave`. The scopes are drawn from the same harmonics, so what you see is exactly what you hear. The phase offset is rotated into each harmonic. All three oscillators of a note start on the same audio sample, so phase cancellation is exact.
