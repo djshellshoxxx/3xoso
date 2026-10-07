@@ -1,64 +1,42 @@
 # 3xOSO
 
-3xOSO is a browser-based visual synthesis learning instrument inspired by the oscillator section of FL Studio's 3x Osc. It is built around one rule: every audible change should also produce an understandable visual and numerical change.
+A visual three-oscillator synthesizer and learning tool, inspired by the workflow of FL Studio's 3x Osc.
 
-Each oscillator has an animated waveform, numeric parameter readouts, pitch-aware color, level-aware size/thickness, and live derived-frequency math. A separate combined scope shows how the three signals interact.
+**Live:** https://djshellshoxxx.github.io/3xoso/
 
-## Current implementation
+Every knob you turn changes both the sound and a picture of the sound, so you can learn what synthesis is doing by watching and listening.
 
-- Three polyphonic oscillators running in an AudioWorklet.
-- Sine, triangle, square, saw, rounded saw and noise generation.
-- Custom selector retained for conceptual parity; FL Studio's actual Custom source comes from the separate Channel Sampler and is outside this synth-only scope.
-- Invert, stereo phase offsets, stereo detune, coarse tune (-24..+24 semitones), fine tune (-100..+100 cents), pan and Osc 2/3 mix controls.
-- Sequential 3x Osc-style mixing: Osc 2 crossfades against Osc 1, then Osc 3 crossfades against the Osc 1+2 result.
-- AM OSC 3, phase randomization and HQ 2x sampling mode.
-- Animated individual scopes and a final analyser-driven output scope.
-- Logarithmic blue-to-red pitch color and contribution-driven waveform height/thickness.
-- Learning Mode with live frequency formulas, mix equations and final oscillator contribution percentages.
-- Computer-keyboard polyphony and pointer-playable piano.
-- Guided learning experiments: equal thirds, phase cancellation, octave stack and wide detune.
-- Responsive Circuit Drift Labs visual design.
-- Deterministic DSP tests, Playwright browser smoke test, GitHub Actions CI and GitHub Pages deployment workflow.
+## What it does
 
-## Run
+- **Three oscillators**, each with sine, triangle, square, saw, rounded saw and noise shapes, plus coarse tune, fine tune, volume, pan, phase offset, invert, mute and solo.
+- **Osc 3 as AM**: oscillator 3 can wobble the volume of oscillators 1 and 2 (tremolo or metallic sidebands).
+- **A live scope per oscillator.** More cycles on screen means a higher pitch. Taller and thicker means louder. Colour runs from blue (low) to red (high).
+- **Harmonic fingerprint** bars that show the sine-wave recipe behind each shape.
+- **Mix scope** that draws the three waves and their sum, so you can see interference, beating and cancellation.
+- **Real output scope and spectrum**, measured from the audio itself.
+- **Mix analysis** that names the interval between oscillators, the beat rate (|f₁ − f₂|), phase cancellation and AM behaviour.
+- **Learn mode**: hover over any control to see what it does and the maths behind it, using the current values. **Play mode** hides the explanations.
+- **8 guided lessons**: pure tone, harmonics, octaves and fifths, beating, phase cancellation, detune width, AM, and noise.
+- **25 presets**: basses (sub, Reese, acid, wobble, drop), pads, leads, keys and plucks, and FX (riser, laser, wind, gate). Each one comes with a demo pattern.
+- **Low-pass filter** with resonance and an envelope amount, plus a global **pitch bend**.
+- **Fixed Hz mode** per oscillator: set the speed directly, from 0.1 Hz (an LFO) to 8 kHz. A spinning **speed wheel** and a frequency-zone map show how fast each oscillator is going.
+- **Pitch-coloured panels**: an oscillator's panel turns darker and bluer as its pitch drops, and lighter and redder as it rises.
+- **16-step sequencer** with tempo, note length and root note.
+- **Loop** of 1, 2 or 4 bars (or one-shot), drawn as a **spinning ring** with a loop counter and a flash on each repeat.
+- **Two automation lanes**: draw a curve or pick a shape. They can drive the filter, pitch, volumes, pans or Fixed Hz, and the knob being moved glows and moves on its own. There are one-click **filter sweep, bass drop, riser and wobble** macros.
+- ADSR envelope, on-screen keyboard, computer-keyboard playing (`Z`–`M`, `Q`–`I`), Space to start and stop playback, Hold, and Web MIDI input in Chrome or Edge.
 
-```bash
-npm install
-npm run dev
-```
+## Running it
 
-The deterministic DSP tests only require Node 22:
+It is a static site with no build step: `index.html`, `style.css` and `app.js`.
 
-```bash
-npm test
-```
+- **Locally:** open `index.html` in a browser.
+- **GitHub Pages:** `.github/workflows/pages.yml` publishes the site on every push to `main`. If it's not live yet, go to *Settings → Pages → Build and deployment* and set *Source* to **GitHub Actions**.
 
-Production verification:
+## How the sound is made
 
-```bash
-npm run build
-npm run e2e
-```
+Each waveform is built as a sum of 64 harmonics (`wave(θ) = Σ bₙ·sin(n·θ)`) and loaded into a Web Audio `PeriodicWave`. The scopes are drawn from the same harmonics, so what you see is exactly what you hear. The phase offset is rotated into each harmonic. All three oscillators of a note start on the same audio sample, so phase cancellation is exact.
 
-## Keyboard
+## Background docs
 
-`A W S E D F T G Y H U J K` plays C4 through C5 chromatically.
-
-## Architecture
-
-The UI is TypeScript + React + Vite. Audio runs in `public/three-osc-processor.js` as an AudioWorklet. Canvas 2D scopes stay on the UI thread. Pure synthesis math lives in `src/dsp/synth.ts` and is tested independently.
-
-The app is static and deploys under `/3xoso/` on GitHub Pages. It has no backend, account system, telemetry or remote audio service.
-
-## Engineering docs
-
-- [Product specification](docs/specs/001-product-spec.md)
-- [Audio/DSP specification](docs/specs/002-audio-dsp-spec.md)
-- [Visualization and learning specification](docs/specs/003-visual-learning-spec.md)
-- [Controls and interaction specification](docs/specs/004-controls-and-interaction.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Testing](docs/TESTING.md)
-
-## Scope
-
-The first release focuses on the synthesizer/oscillator experience only. It intentionally does not reproduce FL Studio's Channel Rack, sampler, mixer, effects, wrapper or DAW environment.
+The original design notes are in [`docs/`](docs/).
