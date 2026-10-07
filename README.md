@@ -31,8 +31,12 @@ Every knob you turn changes both the sound and a picture of the sound, so you ca
 It is a static site with no build step: `index.html`, `style.css` and `app.js`.
 
 - **Locally:** open `index.html` in a browser.
-- **GitHub Pages:** go to *Settings → Pages → Build and deployment*. Set *Source* to **Deploy from a branch**, then pick branch **main** and folder **/ (root)**.
+- **GitHub Pages:** `.github/workflows/pages.yml` publishes the site on every push to `main`. If it's not live yet, go to *Settings → Pages → Build and deployment* and set *Source* to **GitHub Actions**.
 
 ## How the sound is made
 
 Each waveform is built as a sum of 64 harmonics (`wave(θ) = Σ bₙ·sin(n·θ)`) and loaded into a Web Audio `PeriodicWave`. The scopes are drawn from the same harmonics, so what you see is exactly what you hear. The phase offset is rotated into each harmonic. All three oscillators of a note start on the same audio sample, so phase cancellation is exact.
+
+## Background docs
+
+The original design notes are in [`docs/`](docs/).
