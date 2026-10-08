@@ -5,15 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>3xOSO — Visual 3-Oscillator Synth</title>
   <meta name="description" content="A visual three-oscillator synthesizer with presets, automation, a looper and a step sequencer that shows you what every knob does to the sound.">
+  <link rel="icon" href="assets/cdl-mark.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="top">
     <div class="brand">
-      <h1>3x<span>OSO</span></h1>
-      <p>Visual 3-oscillator synth &amp; learning tool · <a class="cdl-link" href="https://djshellshoxxx.github.io/circuitdriftlabs/">a Circuit Drift Labs tool ↗</a></p>
+      <img class="logo" src="assets/cdl-mark.svg" alt="Circuit Drift Labs logo" width="40" height="40">
+      <div><h1>3x<span>OSO</span></h1>
+      <p>Visual 3-oscillator synth &amp; learning tool · <a class="cdl-link" href="https://djshellshoxxx.github.io/circuitdriftlabs/">a Circuit Drift Labs tool ↗</a></p></div>
     </div>
     <div class="top-controls">
+      <span class="seg"><button id="undoBtn" type="button" title="Undo (Ctrl+Z)" disabled>↶ Undo</button><button id="redoBtn" type="button" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button></span>
       <div class="seg" role="group" aria-label="Mode">
         <button id="modePlay" type="button">Play</button>
         <button id="modeLearn" type="button" class="on">Learn</button>
@@ -179,6 +183,7 @@
             <button id="octDown" type="button" class="toggle">− Oct</button>
             <span id="octOut" class="pill">C4</span>
             <button id="octUp" type="button" class="toggle">+ Oct</button>
+            <label class="mini" data-info="chord">Chord <select id="chordSel"><option value="off">Off</option><option value="major">Major</option><option value="minor">Minor</option><option value="sus4">Sus4</option><option value="maj7">Maj7</option><option value="min7">Min7</option><option value="power">Power</option><option value="octaves">Octaves</option></select></label>
             <span id="midiStatus" class="pill dim">MIDI: —</span>
           </div>
         </div>
@@ -189,6 +194,7 @@
 
     <aside class="learn" id="learnPane">
       <section class="panel explain">
+        <div class="help-brand"><img src="assets/cdl-mark.svg" alt="Circuit Drift Labs" width="64" height="64"><div><b>Circuit Drift Labs</b><span>3xOSO v1.0 · open-source audio tools</span><a href="downloads.html">Get the VST3 / CLAP / Standalone ↗</a></div></div>
         <h2>What does this do?</h2>
         <div id="explainTitle" class="explain-title">Hover or touch any control</div>
         <div id="explainBody" class="explain-body">Every control here has an explanation. Point at a slider, button or picture to see what it does and the maths behind it, using the current values.</div>
@@ -204,6 +210,11 @@
           <button type="button" id="shareSound" class="toggle">🔗 Copy share link</button>
           <button type="button" id="recBtn" class="toggle rec">⏺ Record</button>
         </div>
+        <div class="save-row">
+          <button type="button" id="bankExport" class="toggle" title="Download all saved sounds as one file">⬇ Export bank</button>
+          <label class="toggle filebtn" title="Load a sound bank file">⬆ Import bank<input type="file" id="bankImport" accept=".json,application/json" hidden></label>
+        </div>
+        <div class="save-row"><button type="button" id="midiExport" class="toggle" title="Download the step sequencer as a .mid file">🎹 Export pattern (.mid)</button></div>
         <div id="recOut"></div>
         <p id="soundsMsg" class="dim small"></p>
         <ul id="soundsList" class="sounds-list"></ul>
@@ -232,7 +243,7 @@
   </main>
 
   <footer class="foot">
-    3xOSO — inspired by the 3x Osc workflow. Runs entirely in your browser with the Web Audio API.<br>
+    <img src="assets/cdl-mark.svg" alt="" width="22" height="22"> 3xOSO — inspired by the 3x Osc workflow. Runs entirely in your browser with the Web Audio API.<br>
     Part of <a href="https://djshellshoxxx.github.io/circuitdriftlabs/">Circuit Drift Labs</a> — open-source audio tools, instruments and effects.
   </footer>
 

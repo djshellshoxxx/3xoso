@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3xOSO v1.0 — Downloads</title>
+  <meta name="description" content="Download 3xOSO v1.0 as a VST3, CLAP, Windows .exe or Linux build, from Circuit Drift Labs.">
+  <link rel="icon" href="assets/cdl-mark.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    .dl { max-width: 960px; margin: 0 auto; padding: 32px 16px; display: grid; gap: 16px; }
+    .dl h1 { font-size: 34px; letter-spacing: -.03em; }
+    .dl h1 span { color: var(--accent); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .card a.btn { display: inline-block; margin-top: 10px; padding: 8px 12px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); font: 600 11px var(--mono); text-decoration: none; }
+    .card a.btn:hover { background: rgba(232,83,42,.15); }
+    .card p { margin: 6px 0 0; color: var(--dim); font-size: 13px; }
+    .tag { font: 500 10px var(--mono); letter-spacing: .12em; color: var(--teal); }
+    ul { color: var(--dim); }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img class="logo" src="assets/cdl-mark.svg" alt="Circuit Drift Labs logo" width="40" height="40">
+      <div><h1>3x<span>OSO</span></h1><p>Downloads · v1.0 · <a href="https://djshellshoxxx.github.io/circuitdriftlabs/">Circuit Drift Labs ↗</a></p></div>
+    </div>
+    <div class="top-controls"><a class="toggle" href="index.html" style="text-decoration:none">▶ Play in your browser</a></div>
+  </header>
+  <main class="dl">
+    <section class="panel">
+      <h2>Get 3xOSO v1.0</h2>
+      <p class="dim">The same three-oscillator idea as the web synth, as a real instrument plugin with the Circuit Drift Labs interface. All builds are on the <a href="https://github.com/djshellshoxxx/3xoso/releases/tag/v1.0" style="color:var(--teal)">v1.0 release page</a>.</p>
+      <div class="grid" style="margin-top:12px">
+        <div class="panel card"><span class="tag">PLUGIN</span><h2>VST3</h2><p>Windows and Linux, for any VST3 host.</p><a class="btn" href="https://github.com/djshellshoxxx/3xoso/releases/download/v1.0/3xOSO-1.0-windows-x64.zip">Windows .zip</a> <a class="btn" href="https://github.com/djshellshoxxx/3xoso/releases/download/v1.0/3xOSO-1.0-linux-x86_64.tar.gz">Linux .tar.gz</a></div>
+        <div class="panel card"><span class="tag">PLUGIN</span><h2>CLAP</h2><p>Bitwig, Reaper and other CLAP hosts. Included in both archives.</p><a class="btn" href="https://github.com/djshellshoxxx/3xoso/releases/tag/v1.0">Release page</a></div>
+        <div class="panel card"><span class="tag">STANDALONE</span><h2>Windows .exe</h2><p>Run without a DAW. Plays with a MIDI keyboard.</p><a class="btn" href="https://github.com/djshellshoxxx/3xoso/releases/download/v1.0/3xOSO-1.0-windows-x64.exe">3xOSO.exe</a></div>
+        <div class="panel card"><span class="tag">STANDALONE</span><h2>Linux</h2><p>Standalone app plus VST3 and CLAP in one archive.</p><a class="btn" href="https://github.com/djshellshoxxx/3xoso/releases/download/v1.0/3xOSO-1.0-linux-x86_64.tar.gz">Linux .tar.gz</a></div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Install</h2>
+      <ul>
+        <li><b>Windows VST3:</b> copy <code>3xOSO.vst3</code> to <code>C:\Program Files\Common Files\VST3</code>. <b>CLAP:</b> copy <code>3xOSO.clap</code> to <code>C:\Program Files\Common Files\CLAP</code>.</li>
+        <li><b>Linux VST3:</b> copy to <code>~/.vst3</code>. <b>CLAP:</b> copy to <code>~/.clap</code>. Run <code>./3xOSO</code> for the standalone app.</li>
+        <li>Windows may warn about an unsigned app on first run. The builds are not code-signed yet.</li>
+      </ul>
+    </section>
+    <section class="panel">
+      <h2>What's new in v1.0</h2>
+      <ul>
+        <li><b>Chord mode (fun):</b> one key plays a whole chord — major, minor, sus4, maj7, min7, power or octaves. In the web synth and the plugin.</li>
+        <li><b>Undo / redo (usable):</b> step back through your last 60 sound edits with Ctrl+Z / Ctrl+Shift+Z in the web synth. The plugin keeps 8 built-in presets, a Surprise me button and full DAW automation.</li>
+        <li><b>Sound banks and MIDI export (commercial):</b> export and import your whole library as one <code>3xoso-bank.json</code> to share or sell preset packs, and export the step sequencer as a <code>.mid</code> file for any DAW.</li>
+        <li><b>Drift:</b> analog-style slow pitch wander per voice in the plugin.</li>
+        <li><b>New look:</b> the full Circuit Drift Labs identity, with a live output LED and a scrolling data stream in the plugin.</li>
+      </ul>
+    </section>
+  </main>
+  <footer class="foot"><img src="assets/cdl-mark.svg" alt="" width="22" height="22"> 3xOSO by <a href="https://djshellshoxxx.github.io/circuitdriftlabs/">Circuit Drift Labs</a> · plugin built with JUCE (AGPLv3)</footer>
+</body>
+</html>
