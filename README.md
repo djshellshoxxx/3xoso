@@ -44,7 +44,7 @@ Every knob you turn changes both the sound and a picture of the sound, so you ca
 
 ## Running it
 
-The web synth is a static site with no build step: `index.html`, `style.css` and `app.js`. The plugin builds with `cmake -S plugin -B build && cmake --build build --config Release`; tagging `v*` runs `.github/workflows/release.yml`, which builds Linux and Windows and publishes the release.
+The web synth is a static site with no build step: `index.html`, `style.css` and `app.js`. The plugin builds with `cmake -S plugin -B build && cmake --build build --config Release`; `.github/workflows/release.yml` builds Linux and Windows on every push to `main` that touches `plugin/` (or by hand from the Actions tab) and publishes the v1.0 release.
 
 - **Locally:** open `index.html` in a browser.
 - **GitHub Pages:** `.github/workflows/pages.yml` publishes the site on every push to `main`. If it's not live yet, go to *Settings → Pages → Build and deployment* and set *Source* to **GitHub Actions**.
