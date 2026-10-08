@@ -451,7 +451,14 @@
     }
   }
 
+  const CHORDS = { off: [0], major: [0, 4, 7], minor: [0, 3, 7], sus4: [0, 5, 7], maj7: [0, 4, 7, 11], min7: [0, 3, 7, 10], power: [0, 7, 12], octaves: [0, 12, -12] };
+  let chordName = 'off', inChord = false;
   function noteOn(note, velocity = 0.9) {
+    if (!inChord && chordName !== 'off') {
+      inChord = true;
+      try { CHORDS[chordName].forEach((iv) => noteOn(note + iv, velocity)); } finally { inChord = false; }
+      return;
+    }
     if (!ensureAudio()) return;
     pressed.add(note);
     lastNote = note;
@@ -463,6 +470,11 @@
   }
 
   function noteOff(note) {
+    if (!inChord && chordName !== 'off') {
+      inChord = true;
+      try { CHORDS[chordName].forEach((iv) => noteOff(note + iv)); } finally { inChord = false; }
+      return;
+    }
     pressed.delete(note);
     if (state.hold) return;
     const v = voices.get(note);
@@ -622,6 +634,7 @@
     sustain: { title: 'Sustain', body: '<p>The level the note holds at while the key is down. 0 = the note dies away even while held, like a pluck.</p>', live: () => adsrLive() },
     release: { title: 'Release', body: '<p>Time to fade to silence after the note ends.</p>', live: () => adsrLive() },
     master: { title: 'Master volume', body: '<p>Overall output level. A gentle limiter after it stops loud combinations from clipping.</p>' },
+    chord: { title: 'Chord mode', body: '<p>Turns every key you press into a whole chord (for example Major = root + 4 + 7 semitones). One finger, full harmony — and every note is its own three-oscillator voice, so the sound gets thick fast.</p>' },
     hold: { title: 'Hold', body: '<p>Keeps keyboard notes ringing after you let go, so you can use both hands on the controls.</p>' },
     panic: { title: 'Stop all', body: '<p>Stops the sequencer and releases every sounding note.</p>' },
     transport: { title: 'Play / Stop', body: '<p>Starts the step sequencer, the loop and the automation lanes together. Keyboard: <b>Space</b>.</p>' },
@@ -1169,7 +1182,7 @@
     if (peak < 0.0005) { msg(g, w, h, 'silence'); return; }
     const n = 1024;
     const scale = 0.9 / Math.max(0.3, peak);
-    g.strokeStyle = '#5ee6c4';
+    g.strokeStyle = '#4fb6c4';
     g.lineWidth = 1 + 3 * Math.min(1, peak * 2);
     g.beginPath();
     for (let x = 0; x <= w; x++) {
@@ -1231,7 +1244,7 @@
     g.closePath();
     const grad = g.createLinearGradient(0, 0, w, 0);
     grad.addColorStop(0, 'rgba(79,140,255,0.75)');
-    grad.addColorStop(0.5, 'rgba(94,230,196,0.75)');
+    grad.addColorStop(0.5, 'rgba(79,182,196,0.75)');
     grad.addColorStop(1, 'rgba(255,90,80,0.75)');
     g.fillStyle = grad;
     g.fill();
@@ -1297,18 +1310,18 @@
       [state.attack + state.decay + hold, state.sustain], [total, 0]];
     g.beginPath();
     pts.forEach(([t, v], k) => (k ? g.lineTo(X(t), Y(v)) : g.moveTo(X(t), Y(v))));
-    g.strokeStyle = '#5ee6c4';
+    g.strokeStyle = '#4fb6c4';
     g.lineWidth = 2;
     g.stroke();
     g.lineTo(X(0), Y(0));
-    g.fillStyle = 'rgba(94,230,196,0.12)';
+    g.fillStyle = 'rgba(79,182,196,0.12)';
     g.fill();
     [['A', state.attack / 2], ['D', state.attack + state.decay / 2], ['S', state.attack + state.decay + hold / 2], ['R', total - state.release / 2]]
       .forEach(([s, t]) => label(g, s, X(t) - 3, 12));
     // live level meter
     g.fillStyle = 'rgba(255,255,255,0.08)';
     g.fillRect(w - 16, 6, 10, h - 14);
-    g.fillStyle = '#5ee6c4';
+    g.fillStyle = '#4fb6c4';
     const lh = env * (h - 14);
     g.fillRect(w - 16, h - 8 - lh, 10, lh);
   }
@@ -1460,9 +1473,9 @@
     }
     if (pos) {
       const s = pos.s % 16;
-      g.fillStyle = 'rgba(94,230,196,0.13)';
+      g.fillStyle = 'rgba(79,182,196,0.13)';
       g.fillRect(SEQ_LEFT + s * cw, 0, cw, h);
-      g.fillStyle = 'rgba(94,230,196,0.9)';
+      g.fillStyle = 'rgba(79,182,196,0.9)';
       g.fillRect(SEQ_LEFT + (pos.pos % 16) * cw - 1, 0, 2, h);
     }
     for (let s = 0; s < 16; s++) {
@@ -1495,7 +1508,7 @@
     const pulse = transport.playing ? Math.exp(-sincePulse * 3) : 0;
 
     if (pulse > 0.01) {
-      g.strokeStyle = `rgba(94,230,196,${0.7 * pulse})`;
+      g.strokeStyle = `rgba(79,182,196,${0.7 * pulse})`;
       g.lineWidth = 10 * pulse + 2;
       g.beginPath(); g.arc(cx, cy, R + 4, 0, Math.PI * 2); g.stroke();
     }
@@ -1505,7 +1518,7 @@
       const n = state.seq[s % 16];
       let style = s % 4 === 0 ? '#2b3346' : '#1d2230';
       if (n >= 0) style = pitchColor(midiFreq(state.seqRoot + n), 0.55);
-      if (s === cur) style = n >= 0 ? pitchColor(midiFreq(state.seqRoot + n), 1) : '#5ee6c4';
+      if (s === cur) style = n >= 0 ? pitchColor(midiFreq(state.seqRoot + n), 1) : '#4fb6c4';
       g.strokeStyle = style;
       g.lineWidth = s === cur ? 16 : 11;
       g.beginPath(); g.arc(cx, cy, R - 6, a1, a2); g.stroke();
@@ -1538,7 +1551,7 @@
     const a = ang(x);
     if (transport.playing) {
       for (let k = 0; k < 12; k++) {
-        g.fillStyle = `rgba(94,230,196,${0.16 * (1 - k / 12)})`;
+        g.fillStyle = `rgba(79,182,196,${0.16 * (1 - k / 12)})`;
         g.beginPath();
         g.moveTo(cx, cy);
         g.arc(cx, cy, R - 12, a - (k + 1) * 0.045, a - k * 0.045);
@@ -1549,7 +1562,7 @@
     g.strokeStyle = transport.playing ? '#ffffff' : '#5b6478';
     g.lineWidth = 2.5;
     g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * (R - 4), cy + Math.sin(a) * (R - 4)); g.stroke();
-    g.fillStyle = transport.playing ? '#5ee6c4' : '#5b6478';
+    g.fillStyle = transport.playing ? '#4fb6c4' : '#5b6478';
     g.beginPath(); g.arc(cx + Math.cos(a) * (R - 4), cy + Math.sin(a) * (R - 4), 5, 0, Math.PI * 2); g.fill();
     state.lanes.forEach((l, k) => {
       if (!l.on || l.cur == null || !transport.playing) return;
@@ -2517,7 +2530,7 @@
     }
     // travelling pulse since the last note
     if (age >= 0 && age < span) {
-      g.fillStyle = 'rgba(94,230,196,0.8)';
+      g.fillStyle = 'rgba(79,182,196,0.8)';
       g.beginPath(); g.arc(X(age), base + 6, 3, 0, Math.PI * 2); g.fill();
     }
     const kind = d.time < 0.006 ? 'flanger' : d.time < 0.04 ? 'chorus' : d.time < 0.12 ? 'slapback' : 'echo';
@@ -2822,6 +2835,108 @@
     } catch (e) { return false; }
   }
 
+
+  // ================================================================ chord mode, undo/redo, banks, MIDI export
+  const $ = (id) => document.getElementById(id);
+  $('chordSel').addEventListener('change', (e) => { chordName = CHORDS[e.target.value] ? e.target.value : 'off'; });
+
+  // Undo / redo: snapshot the sound after each edit settles (sliders, buttons, drawing).
+  const hist = { stack: [], at: -1, timer: 0, busy: false };
+  const histSnap = () => JSON.stringify(getPatch());
+  function histSync() { $('undoBtn').disabled = hist.at <= 0; $('redoBtn').disabled = hist.at >= hist.stack.length - 1; }
+  function histPush() {
+    if (hist.busy) return;
+    const snap = histSnap();
+    if (snap === hist.stack[hist.at]) return;
+    hist.stack.length = hist.at + 1;
+    hist.stack.push(snap);
+    if (hist.stack.length > 60) hist.stack.shift();
+    hist.at = hist.stack.length - 1;
+    histSync();
+  }
+  function histGo(d) {
+    const k = hist.at + d;
+    if (k < 0 || k >= hist.stack.length) return;
+    const P = sanitizePatch(JSON.parse(hist.stack[k]));
+    if (!P) return;
+    hist.busy = true;
+    hist.at = k;
+    applyPatch(P);
+    hist.busy = false;
+    histSync();
+  }
+  ['input', 'change', 'pointerup'].forEach((ev) => document.addEventListener(ev, () => {
+    if (hist.busy) return;
+    clearTimeout(hist.timer);
+    hist.timer = setTimeout(histPush, 350);
+  }, true));
+  $('undoBtn').addEventListener('click', () => histGo(-1));
+  $('redoBtn').addEventListener('click', () => histGo(1));
+  window.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.target.closest('input[type=text], select')) return;
+    const k = e.key.toLowerCase();
+    if (k === 'z') { e.preventDefault(); histGo(e.shiftKey ? 1 : -1); }
+    else if (k === 'y') { e.preventDefault(); histGo(1); }
+  });
+  histPush();
+
+  // Sound banks: a whole library as one .json file (share, sell or back up preset packs).
+  function download(name, blob) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  $('bankExport').addEventListener('click', () => {
+    const list = loadStore();
+    if (!list.length) { soundsMsg.textContent = 'Save a sound first, then export your bank.'; return; }
+    const bank = { format: '3xoso-bank', version: 1, maker: 'Circuit Drift Labs', created: new Date().toISOString(), sounds: list };
+    download('3xoso-bank.json', new Blob([JSON.stringify(bank, null, 1)], { type: 'application/json' }));
+    soundsMsg.textContent = `Exported ${list.length} sound${list.length === 1 ? '' : 's'} to 3xoso-bank.json.`;
+  });
+  $('bankImport').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const bank = JSON.parse(await f.text());
+      if (bank.format !== '3xoso-bank' || !Array.isArray(bank.sounds)) throw new Error('not a bank');
+      const ok = bank.sounds.slice(0, 200).map((s) => ({ name: String(s.name || 'Imported').slice(0, 40), patch: s.patch, date: Date.now() }))
+        .filter((s) => sanitizePatch(s.patch));
+      saveStore([...ok, ...loadStore()].slice(0, 200));
+      soundsMsg.textContent = `Imported ${ok.length} sound${ok.length === 1 ? '' : 's'}.`;
+      renderSounds();
+    } catch (err) { soundsMsg.textContent = 'That file is not a 3xOSO sound bank.'; }
+  });
+
+  // MIDI export: the step sequencer as a Standard MIDI File to drop into any DAW.
+  function midiFile() {
+    const PPQ = 480, step = PPQ / 4, len = Math.max(step, Math.round(state.gate * step));
+    const vl = (n) => { const b = [n & 0x7f]; while ((n >>= 7)) b.unshift((n & 0x7f) | 0x80); return b; };
+    const ev = [];
+    const steps = totalSteps();
+    for (let s = 0; s < steps; s++) {
+      const n = state.seq[s % 16];
+      if (n < 0) continue;
+      const note = clamp(state.seqRoot + n, 0, 127);
+      ev.push([s * step, [0x90, note, 100]], [s * step + len, [0x80, note, 0]]);
+    }
+    ev.sort((a, b) => a[0] - b[0] || a[1][0] - b[1][0]);
+    const mpq = Math.round(60000000 / state.bpm);
+    const trk = [0, 0xff, 0x51, 3, mpq >> 16 & 255, mpq >> 8 & 255, mpq & 255];
+    let t = 0;
+    for (const [at, d] of ev) { trk.push(...vl(at - t), ...d); t = at; }
+    trk.push(...vl(Math.max(0, steps * step - t)), 0xff, 0x2f, 0);
+    const u32 = (n) => [n >>> 24, n >> 16 & 255, n >> 8 & 255, n & 255];
+    return new Uint8Array([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, PPQ >> 8, PPQ & 255, 0x4d, 0x54, 0x72, 0x6b, ...u32(trk.length), ...trk]);
+  }
+  $('midiExport').addEventListener('click', () => {
+    if (state.seq.every((n) => n < 0)) { soundsMsg.textContent = 'The sequencer is empty — add some steps first.'; return; }
+    download('3xoso-pattern.mid', new Blob([midiFile()], { type: 'audio/midi' }));
+    soundsMsg.textContent = `Exported ${state.bars} bar${state.bars > 1 ? 's' : ''} at ${state.bpm} BPM to 3xoso-pattern.mid.`;
+  });
+
   // Recorder: taps the final output and writes a 16-bit stereo WAV.
   const rec = { node: null, chunks: [], on: false, start: 0, frames: 0 };
   const recBtn = document.getElementById('recBtn');
@@ -3019,14 +3134,14 @@
     if (!quiz.revealed) {
       // a pulsing question mark while you listen
       const a = 0.5 + 0.5 * Math.sin(performance.now() / 300);
-      g.fillStyle = `rgba(94,230,196,${0.4 + 0.5 * a})`;
+      g.fillStyle = `rgba(79,182,196,${0.4 + 0.5 * a})`;
       g.font = '600 34px system-ui, sans-serif';
       g.textAlign = 'center';
       g.fillText('?', w / 2, h / 2 + 12);
       g.textAlign = 'left';
       return;
     }
-    g.strokeStyle = '#5ee6c4';
+    g.strokeStyle = '#4fb6c4';
     g.lineWidth = 2;
     g.beginPath();
     if (quiz.mode === 'wave') {

@@ -34,9 +34,17 @@ Every knob you turn changes both the sound and a picture of the sound, so you ca
 - **Ear trainer**: listening games for waveforms, intervals and filter brightness, with a picture of the answer and a best-streak score.
 - ADSR envelope, on-screen keyboard, computer-keyboard playing (`Z`–`M`, `Q`–`I`), Space to start and stop playback, Hold, and Web MIDI input in Chrome or Edge.
 
+## New in v1.0
+
+- **Chord mode** (fun): one key plays a whole chord (major, minor, sus4, maj7, min7, power, octaves).
+- **Undo / redo** (usable): `Ctrl+Z` / `Ctrl+Shift+Z` step through your last 60 sound edits.
+- **Sound banks and MIDI export** (commercial): export/import your library as a `3xoso-bank.json` preset pack, and export the sequencer as a `.mid` file.
+- **Circuit Drift Labs look** across the whole interface, with the logo in the help panel.
+- **Native plugins**: VST3, CLAP, Windows `.exe` and Linux builds. See the [downloads page](https://djshellshoxxx.github.io/3xoso/downloads.html) or the [v1.0 release](https://github.com/djshellshoxxx/3xoso/releases/tag/v1.0). Source is in [`plugin/`](plugin/) (JUCE 8, AGPLv3).
+
 ## Running it
 
-It is a static site with no build step: `index.html`, `style.css` and `app.js`.
+The web synth is a static site with no build step: `index.html`, `style.css` and `app.js`. The plugin builds with `cmake -S plugin -B build && cmake --build build --config Release`; `.github/workflows/release.yml` builds Linux and Windows on every push to `main` that touches `plugin/` (or by hand from the Actions tab) and publishes the v1.0 release.
 
 - **Locally:** open `index.html` in a browser.
 - **GitHub Pages:** `.github/workflows/pages.yml` publishes the site on every push to `main`. If it's not live yet, go to *Settings → Pages → Build and deployment* and set *Source* to **GitHub Actions**.
