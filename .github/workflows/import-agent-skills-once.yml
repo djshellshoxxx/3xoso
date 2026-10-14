@@ -19,7 +19,7 @@ jobs:
           set -euo pipefail
           root="$(mktemp -d)"
           git clone --quiet --depth 1 --filter=blob:none --sparse https://github.com/obra/superpowers.git "$root/superpowers"
-          git -C "$root/superpowers" sparse-checkout set skills LICENSE
+          git -C "$root/superpowers" sparse-checkout set skills
           git -C "$root/superpowers" fetch --quiet --depth 1 origin bb92a77741419a4ab5f06e711a283343f1ada0c3
           git -C "$root/superpowers" checkout --quiet --detach FETCH_HEAD
           mkdir -p skills/_third_party_licenses/obra-superpowers
