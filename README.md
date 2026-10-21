@@ -60,3 +60,12 @@ Each waveform is built as a sum of 64 harmonics (`wave(θ) = Σ bₙ·sin(n·θ)
 ## Background docs
 
 The original design notes are in [`docs/`](docs/).
+
+## Verification notes
+
+- `app.js` passes `node --check` on this snapshot.
+- `docs/TESTING.md` describes `npm test`, `npm run build` and `npm run e2e` (Node 22, Vite, Playwright). **This repository has no `package.json`, no test files and no build config**, so those commands do not exist in this tree. Treat `docs/TESTING.md` as out of date until it is reconciled with the code.
+
+## Wiki
+
+Wiki source pages are in [docs/wiki/](docs/wiki/Home.md): user guide, developer guide and codebase map.
