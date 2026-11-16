@@ -1,6 +1,6 @@
 **3xOSO**
 
-- [Home](Home)
-- [User Guide](User-Guide)
-- [Developer Guide](Developer-Guide)
-- [Codebase Map](Codebase-Map)
+- [Home](Home.md)
+- [User Guide](User-Guide.md)
+- [Developer Guide](Developer-Guide.md)
+- [Codebase Map](Codebase-Map.md)

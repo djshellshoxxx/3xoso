@@ -4,8 +4,8 @@
 static site (`index.html`, `style.css`, `app.js`) with a separate C++ plugin in `plugin/`. Each control changes both the sound
 and a picture of the sound.
 
-- [User Guide](User-Guide)
-- [Developer Guide](Developer-Guide)
-- [Codebase Map](Codebase-Map)
+- [User Guide](User-Guide.md)
+- [Developer Guide](Developer-Guide.md)
+- [Codebase Map](Codebase-Map.md)
 
 Specs: `docs/specs/001` to `004`. Architecture: `docs/ARCHITECTURE.md`.
